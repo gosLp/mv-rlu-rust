@@ -116,17 +116,33 @@ impl<K: Ord + Clone , V: Clone > BPTree<K, V> {
         }
     }
 
-    // pub fn range_query(&self, start_key: &K, end_key: &K) -> Vec<(K,V)> {
-    //     let mut result = Vec::new();
-    //     let mut current_node = &*self.root;
+    pub fn range_query(&self, start_key: &K, end_key: &K) -> Vec<(K,V)> {
+        let mut result = Vec::new();
+        let mut current_node = &*self.root;
 
 
-    //     // // Step 1
-    //     // while let BPTreeNode::InternalNode { keys, children } = current_node {
-    //     //     let idx = keys.iter().position(|k| start_key < k).unwrap_or(keys.len());
-    //     //     current_node = &children[idx];
-    //     // }
-    // }
+        // Step 1
+        while let BPTreeNode::InternalNode { keys, children } = current_node {
+            let idx = keys.iter().position(|k| start_key < k).unwrap_or(keys.len());
+            current_node = &*children[idx];
+        }
+
+        // Collect the keys and values from the lead nodes
+        while let BPTreeNode::LeafNode { keys, values, next } = current_node {
+            for (i, key) in keys.iter().enumerate() {
+                if key >= start_key && key <= end_key {
+                    result.push((key.clone(), values[i].clone()));
+                }
+            }
+            if let Some(next_node) = next {
+                current_node = &*next_node;
+            } else {
+                break; // No more leaf nodes
+            }
+        }
+
+        result
+    }
 }
 
 

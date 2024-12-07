@@ -4,6 +4,7 @@
 #[cfg(test)]
 mod tests {
     use core::panic;
+    use std::{result, vec};
     use rlu::{BPTree, BPTreeNode};
 
     #[test]
@@ -27,6 +28,19 @@ mod tests {
             panic!("Root is not a leaf node");
         }
 
+    }
+
+    #[test]
+    fn search_range() {
+        let mut bptree = BPTree::new();
+        bptree.insert(1, 'a');
+        bptree.insert(2, 'b');
+        bptree.insert(3, 'c');
+        bptree.insert(5, 'd');
+
+        let result = bptree.range_query(&2, &4);
+
+        assert_eq!(result, vec![( 2 , 'b'), ( 3, 'c')]);
     }
 
 
