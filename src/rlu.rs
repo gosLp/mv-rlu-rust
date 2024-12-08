@@ -15,7 +15,7 @@ pub struct WsHdr<T: RluObj> {
     pub thread_id: usize,
 }
 
-pub struct ObjList<T: RluObj> {
+pub struct ObjList<T: RluObj> { 
     num_of_objs: usize,
     cur_pos: usize,
     buffer: [Option<T>; RLU_MAX_LOG_SIZE],
