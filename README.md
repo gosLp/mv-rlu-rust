@@ -1,4 +1,4 @@
-# RLU in Rust
+# MV-RLU in Rust
 
 ### Overview
 
