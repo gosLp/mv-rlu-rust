@@ -2,6 +2,9 @@
 
 ### Overview
 
+This is a project repo that is using the rlu implementation by hudson-ayers/rlu-rust
+we are implementing a B+tree using an optimisation on rlu called mv-rlu in rust
+
 This is a userspace implementation of the Read-Log-Update concurrency mechanism ([SOSP '15](https://dl.acm.org/citation.cfm?id=2815406)), written in Rust. This implementation
 is for the most part a direct port of the C code to Rust, with a few exceptions, and as a result uses lots
 of unsafe and raw pointer manipulations, and is not particularly "rusty".
