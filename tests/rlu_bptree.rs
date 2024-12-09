@@ -5,16 +5,16 @@ mod tests {
     #[test]
     fn test_rlu_bplus_tree() {
         // Create a new BPlusTree
-        let bptree = BPlusTree::<i32, char>::new();
+        let mut bptree = BPlusTree::<i32, char>::new();
 
         // Insert some key-value pairs
         bptree.insert(10, 'a');
-        // bptree.insert(20, 'b');
+        bptree.insert(20, 'b');
         // bptree.insert(15, 'c');
 
         // Search for existing keys
         assert_eq!(bptree.search(&10), Some('a'));
-        // assert_eq!(bptree.search(&20), Some('b'));
+        assert_eq!(bptree.search(&20), Some('b'));
         // assert_eq!(bptree.search(&15), Some('c'));
 
         // // Search for a non-existing key
