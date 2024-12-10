@@ -1,13 +1,13 @@
 use std::fmt::Debug;
 use std::sync::atomic::{AtomicPtr, Ordering};
 use std::ptr;
-use crate::rlu::{RluObj, RluObjHdr,  WsHdr, PTR_ID_OBJ_COPY};
+use crate::rlu::{RluObj, RluObjHdr,  WsHdr, PTR_ID_OBJ_COPY, RLU_MAX_THREADS};
 use crate::{rlu_abort, rlu_dereference, rlu_reader_lock, rlu_reader_unlock, rlu_thread_init, GlobalRlu, rlu_try_lock};
 use std::alloc::{alloc, Layout};
 
 
 // lets define the node order for simplicity
-const B: usize = 5; // small order for demonstration
+const B: usize = 4; // small order for demonstration
 
 #[derive(Debug)]
 pub struct Node<K:Clone , V: Clone> {
@@ -95,10 +95,15 @@ impl<K: Clone, V: Clone> RluObj for Node<K, V> {
 
     fn get_locking_thread_from_ws_obj(&self) -> usize {
         if let Some(ws) = &self.hdr.ws_hdr {
+            if ws.thread_id >= RLU_MAX_THREADS {
+                // Invalid thread ID detected
+                dbg!("Invalid thread ID in ws_hdr", ws.thread_id);
+                return RLU_MAX_THREADS;  // Return invalid ID
+            }
             ws.thread_id
         } else {
             // if no ws_hdr, it's not locked, return invalid
-            usize::MAX
+            RLU_MAX_THREADS  // Return invalid ID for unlocked objects
         }
     }
 
@@ -235,6 +240,7 @@ impl<K: Ord + Clone + Copy + Debug, V: Ord + Clone + Copy + Debug> BPlusTree<K, 
 
             // If tree is empty
             let mut node_ptr = rlu_dereference(self.rlu, self.id, self.root);
+            dbg!("search called for key {:?}", &key);
             dbg!("search called and root is {:?}", &*node_ptr);
             if node_ptr.is_null() {
                 // othing in tree
@@ -300,7 +306,7 @@ impl<K: Ord + Clone + Copy + Debug, V: Ord + Clone + Copy + Debug> BPlusTree<K, 
                             break;
                         }
                     }
-
+                    dbg!("Descending into child index", child_idx);
                     let child_ptr = node.children[child_idx];
                     if child_ptr.is_null() {
                         // No child? tree might be in an incomplete state or something went wrong
@@ -310,6 +316,7 @@ impl<K: Ord + Clone + Copy + Debug, V: Ord + Clone + Copy + Debug> BPlusTree<K, 
 
                     // Move down to child
                     node_ptr = rlu_dereference(self.rlu, self.id, child_ptr);
+                    dbg!("dereferenced child node", &*node_ptr);
                     if node_ptr.is_null() {
                         // Child pointer incalid 
                         rlu_reader_unlock(self.rlu, self.id);
@@ -320,34 +327,6 @@ impl<K: Ord + Clone + Copy + Debug, V: Ord + Clone + Copy + Debug> BPlusTree<K, 
             }
             // // In a full B+tree, we'd descend through internal nodes to find the leaf node
             // // For now, just read the root node directly
-            // let root = rlu_dereference(self.rlu, self.id, self.root);
-            // if root.is_null() {
-            //     rlu_reader_unlock(self.rlu, self.id);
-            //     return None;
-            // }
-
-            // let root_ref = &*root;
-
-            // for i in 0..root_ref.num_keys {
-            //     if let Some(ref k) = root_ref.keys[i] {
-            //         match key.cmp(k) {
-            //             std::cmp::Ordering::Equal => {
-            //                 // Found the key
-            //                 let val = root_ref.values[i].clone();
-            //                 rlu_reader_unlock(self.rlu, self.id);
-            //                 return val;
-            //             }
-            //             std::cmp::Ordering::Less =>{
-            //                 // Since keys are sorted, if we passsed the position where the key would be, 
-            //                 // it not in the tree
-            //                 break;
-            //             }
-            //             std::cmp::Ordering::Greater => continue,
-            //         } 
-            //     }
-            // }
-            // rlu_reader_unlock(self.rlu, self.id);
-            // None
         }
     }
     
@@ -404,23 +383,21 @@ impl<K: Ord + Clone + Copy + Debug, V: Ord + Clone + Copy + Debug> BPlusTree<K, 
                 // Need to split leaf
                 dbg!("Leaf is full, splitting");
                 let (new_leaf_ptr, split_key) = self.split_leaf(leaf_ref, key, value);
+                // In insert_into_parent after creating new root:
 
                 // WE just created a new leaf and got a split_key to push up
 
                 // Unlock leaf and commit to ensure leaf changes are visible before dealing with parent
                 // Note: In traditional RLU usage, you might choose to do all changes in one atomic RLU write transaction,
                 // but let's keep it simple and commit step by step.
-                // rlu_reader_unlock(self.rlu, self.id);
+                rlu_reader_unlock(self.rlu, self.id);
 
                 // Now we must insert `split_key` into the parent. This means we must:
                 // 1) Re-lock as a reader
                 // 2) Find the parent of this leaf (for now, assume we store parent pointers or handle a root special case)
                 // 3) Lock parent and insert the split_key as a separator, possibly splitting again if needed.
+                rlu_reader_lock(self.rlu, self.id);
 
-                // rlu_reader_lock(self.rlu, self.id);
-                // let root = self.root; // stable pointer to the root location
-                // let node_ptr = rlu_dereference(self.rlu, self.id, root);
-                // println!("Root after commit: {:?}", &*node_ptr);
                 // // Instead of using leaf_ptr directly, find the leaf again:
                 let leaf_ptr_deref = self.find_leaf_for_key(&split_key);
                 if leaf_ptr_deref.is_null() {
@@ -432,55 +409,10 @@ impl<K: Ord + Clone + Copy + Debug, V: Ord + Clone + Copy + Debug> BPlusTree<K, 
                 // // Now re-derive new_leaf_ptr:
                 let new_leaf_ptr_deref = rlu_dereference(self.rlu, self.id, new_leaf_ptr);
                 self.insert_into_parent(leaf_ptr_deref, new_leaf_ptr_deref, split_key);
-                // rlu_reader_unlock(self.rlu, self.id);
+                rlu_reader_unlock(self.rlu, self.id);
                 return;
 
             }
-
-            // let root = rlu_dereference(self.rlu, self.id, self.root);
-            // if root.is_null() {
-            //     // Tree is empty, we need to create root node
-            //     // We'll do something simplistic: The root node is already created in new().
-            //     // If it’s empty, we just add directly (need to lock the root)
-
-            //     rlu_reader_unlock(self.rlu, self.id);
-            //     return;
-            // }
-
-            // // Try to uograde lock on root
-            // let mut p_root = root;
-            // if !rlu_try_lock(self.rlu, self.id, &mut p_root) {
-            //     // Could not lock, abort and retry or handle concureny
-            //     rlu_abort(self.rlu, self.id);
-            //     return;
-            // }
-
-            // let root_mut = &mut *p_root;
-            // // Insert key if there's space
-            // if root_mut.num_keys < root_mut.keys.len() {
-            //     // simple insertion in sorted order
-            //     let pos= root_mut.keys.iter().position(|k_opt| {
-            //         k_opt.as_ref().map_or(true, |k| k > &key)
-            //     }).unwrap_or(root_mut.num_keys);
-
-            //     // Shift keys/values to make room
-            //     for i in (pos..root_mut.num_keys).rev() {
-            //         root_mut.keys[i+1] = root_mut.keys[i].take();
-            //         root_mut.values[i+1] = root_mut.values[i].take();
-            //     }
-            //     root_mut.keys[pos] = Some(key);
-            //     root_mut.values[pos] = Some(value);
-            //     root_mut.num_keys += 1;
-            // } else {
-            //     // If full, we would need to handle splitting.
-            //     // This is where the complexity of a  B+tree comes in.
-            //     // For now, we won't implement splitting
-            // }
-            
-            // //unlock and commit
-            // rlu_reader_unlock(self.rlu, self.id);
-
-
         }
     }
 
@@ -569,6 +501,12 @@ impl<K: Ord + Clone + Copy + Debug, V: Ord + Clone + Copy + Debug> BPlusTree<K, 
         // SPlit into two halves
         let split = (B+1)/2;
 
+        // // Clear the original leaf first
+        // for i in 0..B {
+        //     leaf.keys[i] = None;
+        //     leaf.values[i] = None;
+        // }
+
         // left half goes back into leaf
         for i in 0..split {
             leaf.keys[i] = Some(temp_keys[i].clone());
@@ -587,12 +525,12 @@ impl<K: Ord + Clone + Copy + Debug, V: Ord + Clone + Copy + Debug> BPlusTree<K, 
         let new_leaf_ptr = Box::into_raw(new_leaf_box);
 
         // setup new leaf properties
-        let mut p_new_leaf = new_leaf_ptr;
-        if !rlu_try_lock(self.rlu, self.id, &mut p_new_leaf) {
-            dbg!(" Failed to unclock new leaf");
-            rlu_abort(self.rlu, self.id);
-            return (ptr::null_mut(), key);
-        }
+        let p_new_leaf = new_leaf_ptr;
+        // if !rlu_try_lock(self.rlu, self.id, &mut p_new_leaf) {
+        //     dbg!(" Failed to unclock new leaf");
+        //     rlu_abort(self.rlu, self.id);
+        //     return (ptr::null_mut(), key);
+        // }
 
         let new_leaf = &mut *p_new_leaf;
         let mut j =0;
@@ -602,6 +540,7 @@ impl<K: Ord + Clone + Copy + Debug, V: Ord + Clone + Copy + Debug> BPlusTree<K, 
             new_leaf.values[j] = Some(temp_values[i].clone());
             j += 1;
         }
+        // new_leaf.num_keys = j;
 
         assert!(leaf.num_keys <= B, "Left leaf too many keys after split");
         assert!(new_leaf.num_keys <= B, "Right leaf too many keys after split");
@@ -659,6 +598,23 @@ impl<K: Ord + Clone + Copy + Debug, V: Ord + Clone + Copy + Debug> BPlusTree<K, 
         rlu_reader_unlock(self.rlu, self.id);
     }
 
+    // helper function to safely set up parent-child relationships
+    unsafe fn link_nodes(&self, parent: *mut Node<K, V>, child: *mut Node<K, V>, child_index: usize) -> bool {
+        let mut p_parent = parent;
+        let mut p_child = child;
+        
+        // Lock both nodes in consistent order
+        if !rlu_try_lock(self.rlu, self.id, &mut p_parent) ||
+        !rlu_try_lock(self.rlu, self.id, &mut p_child) {
+            rlu_abort(self.rlu, self.id);
+            return false;
+        }
+        
+        (*p_parent).children[child_index] = child;
+        (*p_child).parent = parent;
+        true
+    }
+
     unsafe fn insert_into_parent(&mut self, left: *mut Node<K, V>, right: *mut Node<K, V>, key: K) {
         dbg!("insert_into_parent called", &key);
 
@@ -706,7 +662,7 @@ impl<K: Ord + Clone + Copy + Debug, V: Ord + Clone + Copy + Debug> BPlusTree<K, 
             self.root = root_ptr;
 
             // Now commit the transaction which will copy back all locked nodes
-            rlu_reader_unlock(self.rlu, self.id);
+            // rlu_reader_unlock(self.rlu, self.id);
 
             // println!("Created new root with key: {:?}", key);
             // println!("Root keys: {:?}", &(*p_root).keys[..(*p_root).num_keys]);
@@ -715,16 +671,16 @@ impl<K: Ord + Clone + Copy + Debug, V: Ord + Clone + Copy + Debug> BPlusTree<K, 
 
 
             // Start a new read transaction to ensure we see the committed state
-            rlu_reader_lock(self.rlu, self.id);
-            let root_check = rlu_dereference(self.rlu, self.id, self.root);
-            dbg!("New root state after commit:", &*root_check);
-            rlu_reader_unlock(self.rlu, self.id);
+            // rlu_reader_lock(self.rlu, self.id);
+            // let root_check = rlu_dereference(self.rlu, self.id, self.root);
+            // dbg!("New root state after commit:", &*root_check);
+            // rlu_reader_unlock(self.rlu, self.id);
             // rlu_reader_unlock(self.rlu, self.id);
             return;
         }
 
         dbg!("Parent exists, inserting key into parent");
-        dbg!("Parent keys before insert: {:?}", &(*parent_ptr).keys[..(*parent_ptr).num_keys]);
+        // dbg!("Parent keys before insert: {:?}", &(*parent_ptr).keys[..(*parent_ptr).num_keys]);
 
         // If we have a parent
         let mut p_parent = parent_ptr;
@@ -732,52 +688,73 @@ impl<K: Ord + Clone + Copy + Debug, V: Ord + Clone + Copy + Debug> BPlusTree<K, 
         if !rlu_try_lock(self.rlu, self.id, &mut p_parent) {
             dbg!("Could not lock parent, aborting insert_into_parent");
             rlu_abort(self.rlu, self.id);
-            rlu_reader_unlock(self.rlu, self.id);
+            // rlu_reader_unlock(self.rlu, self.id);
             return;
         }
 
         let parent_node = &mut *p_parent;
 
-        println!("Inserting key {:?} into parent. Parent keys before: {:?}", key, &parent_node.keys[..parent_node.num_keys]);
-
-
-        // Insert the key into the parent, keeping keys sorted:
-        let pos = parent_node.keys.iter()
+        if parent_node.num_keys <= B {
+            // Simple insert case
+            let pos = parent_node.keys.iter()
             .take(parent_node.num_keys)
             .position(|k_opt| k_opt.as_ref().map_or(true, |k| k > &key))
             .unwrap_or(parent_node.num_keys);
 
-        assert!(parent_node.num_keys < B, "Parent full before insertion! Must split first.");
+            // Shift existing keys/children
+            for i in (pos..parent_node.num_keys).rev() {
+                parent_node.keys[i+1] = parent_node.keys[i].take();
+                parent_node.children[i+2] = parent_node.children[i+1];
+            }
 
+            parent_node.keys[pos] = Some(key);
+            parent_node.children[pos+1] = right;
+            parent_node.num_keys += 1;
 
-        // Make room for new key/child
-        for i in (pos..parent_node.num_keys).rev() {
-            parent_node.keys[i+1] = parent_node.keys[i].take();
-            parent_node.children[i+2] = parent_node.children[i+1];
-        }
-
-        parent_node.keys[pos] = Some(key);
-        parent_node.children[pos+1] = right;
-        parent_node.num_keys += 1;
-        (*right).parent = p_parent;
-
-        // dbg!("Key inserted into parent", parent_keys = &parent_node.keys[..parent_node.num_keys]);
-        println!("Parent keys after insert: {:?}", &parent_node.keys[..parent_node.num_keys]);
-
-
-        if parent_node.num_keys <= B {
-            // Fits, no split needed
-            // rlu_reader_unlock(self.rlu, self.id);
+            // Lock right child to update parent
+            let mut p_right = right;
+            if !rlu_try_lock(self.rlu, self.id, &mut p_right) {
+                rlu_abort(self.rlu, self.id);
+                return;
+            }
+            (*p_right).parent = p_parent;
+            
             return;
         }
+        println!("Inserting key {:?} into parent. Parent keys before: {:?}", key, &parent_node.keys[..parent_node.num_keys]);
 
-        // Parent full, split parent
-        dbg!("Parent full, splitting parent node");
+        // // Insert the key into the parent, keeping keys sorted:
+        // let pos = parent_node.keys.iter()
+        //     .take(parent_node.num_keys)
+        //     .position(|k_opt| k_opt.as_ref().map_or(true, |k| k > &key))
+        //     .unwrap_or(parent_node.num_keys);
+
+        // assert!(parent_node.num_keys < B, "Parent full before insertion! Must split first.");
+
+
+        // // Make room for new key/child
+        // for i in (pos..parent_node.num_keys).rev() {
+        //     parent_node.keys[i+1] = parent_node.keys[i].take();
+        //     parent_node.children[i+2] = parent_node.children[i+1];
+        // }
+
+        // parent_node.keys[pos] = Some(key);
+        // parent_node.children[pos+1] = right;
+        // parent_node.num_keys += 1;
+        // (*right).parent = p_parent;
+
+
+
+        
+            // Fits, no split needed
+            // rlu_reader_unlock(self.rlu, self.id);
+        
+        // Parent needs splitting
         let (new_parent_ptr, parent_split_key) = self.split_internal_node(parent_node);
-        // rlu_reader_unlock(self.rlu, self.id);
+        if !new_parent_ptr.is_null() {
+            self.insert_into_parent(p_parent, new_parent_ptr, parent_split_key);
+        }
 
-        // Insert the split key into the grandparent recursively
-        // self.insert_into_parent(p_parent, new_parent_ptr, parent_split_key);
 
 
 
@@ -813,13 +790,13 @@ impl<K: Ord + Clone + Copy + Debug, V: Ord + Clone + Copy + Debug> BPlusTree<K, 
         rlu_reader_lock(self.rlu, self.id);
         let new_parent_box = Box::new(Node::new(false));
         let new_parent_ptr = Box::into_raw(new_parent_box);
-        let mut p_new_parent = new_parent_ptr;
-        if !rlu_try_lock(self.rlu, self.id, &mut p_new_parent) {
-            dbg!("Failed to lock new internal node after creation");
-            rlu_abort(self.rlu, self.id);
-            rlu_reader_unlock(self.rlu, self.id);
-            return (ptr::null_mut(), split_key); // error scenario
-        }
+        let p_new_parent = new_parent_ptr;
+        // if !rlu_try_lock(self.rlu, self.id, &mut p_new_parent) {
+        //     dbg!("Failed to lock new internal node after creation");
+        //     rlu_abort(self.rlu, self.id);
+        //     // rlu_reader_unlock(self.rlu, self.id);
+        //     return (ptr::null_mut(), split_key); // error scenario
+        // }
 
         let new_node = &mut *p_new_parent;
         let mut j = 0;
@@ -845,7 +822,10 @@ impl<K: Ord + Clone + Copy + Debug, V: Ord + Clone + Copy + Debug> BPlusTree<K, 
         // Set parents of moved children
         for i in 0..=new_node.num_keys {
             if !new_node.children[i].is_null() {
-                (*new_node.children[i]).parent = p_new_parent;
+                let mut child_ptr = new_node.children[i];
+                if rlu_try_lock(self.rlu, self.id, &mut child_ptr) {
+                    (*child_ptr).parent = p_new_parent;
+                }
             }
         }
 
@@ -855,8 +835,99 @@ impl<K: Ord + Clone + Copy + Debug, V: Ord + Clone + Copy + Debug> BPlusTree<K, 
         println!("New node keys after split: {:?}", &(*p_new_parent).keys[..(*p_new_parent).num_keys]);
 
 
-        rlu_reader_unlock(self.rlu, self.id);
+        // rlu_reader_unlock(self.rlu, self.id);
         (new_parent_ptr, split_key)
     }
-}
 
+    
+}
+impl<K: Ord + Clone + Copy + Debug, V: Ord + Clone + Copy + Debug> BPlusTree<K, V> {
+    pub fn print_tree(&self) {
+        println!("\n=== B+ Tree Structure ===");
+        println!("Order (B) = {}", B);
+        
+        unsafe {
+            rlu_reader_lock(self.rlu, self.id);
+            let root = rlu_dereference(self.rlu, self.id, self.root);
+            if root.is_null() {
+                println!("Empty tree");
+                rlu_reader_unlock(self.rlu, self.id);
+                return;
+            }
+
+            let mut current_level = vec![root];
+            let mut level_number = 0;
+
+            while !current_level.is_empty() {
+                println!("\nLevel {}: ", level_number);
+                println!("{}", "=".repeat(80));
+                
+                let mut next_level = Vec::new();
+                let mut node_positions = Vec::new();
+                
+                // First pass: collect node positions
+                for (node_idx, node_ptr) in current_level.iter().enumerate() {
+                    let node = &**node_ptr;
+                    node_positions.push((*node_ptr) as usize);
+                    
+                    print!("Node {}: [", node_idx);
+                    for i in 0..node.num_keys {
+                        if let Some(key) = &node.keys[i] {
+                            print!("{:?}", key);
+                            if i < node.num_keys - 1 {
+                                print!(" | ");
+                            }
+                        }
+                    }
+                    print!("]");
+                    
+                    if node.is_leaf {
+                        print!("🍃");
+                        print!(" vals:[");
+                        for i in 0..node.num_keys {
+                            if let Some(val) = &node.values[i] {
+                                print!("{:?}", val);
+                                if i < node.num_keys - 1 {
+                                    print!(" | ");
+                                }
+                            }
+                        }
+                        print!("]");
+                    } else {
+                        print!("🔵");
+                        // Collect children for next level
+                        for i in 0..=node.num_keys {
+                            let child = node.children[i];
+                            if !child.is_null() {
+                                next_level.push(child);
+                            }
+                        }
+                    }
+                    
+                    // Print parent info with node address
+                    if !node.parent.is_null() {
+                        let parent_addr = node.parent as usize;
+                        print!(" ↑(addr: 0x{:x})", parent_addr);
+                        if !node_positions.contains(&parent_addr) && level_number > 0 {
+                            print!(" WARNING: Invalid parent!");
+                        }
+                    } else if level_number > 0 {
+                        print!(" WARNING: Missing parent!");
+                    } else {
+                        print!(" (root addr: 0x{:x})", *node_ptr as usize);
+                    }
+                    
+                    println!();
+                }
+                
+                println!("{}", "-".repeat(80));
+                
+                current_level = next_level;
+                level_number += 1;
+            }
+            
+            rlu_reader_unlock(self.rlu, self.id);
+        }
+        println!("\n=== End of Tree ===\n");
+    }
+}

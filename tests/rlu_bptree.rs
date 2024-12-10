@@ -35,6 +35,25 @@ mod tests {
 
         bptree.insert(40, 'f');
         assert_eq!(bptree.search(&35), Some('e')); 
+        assert_eq!(bptree.search(&40), Some('f'));
+        assert_eq!(bptree.search(&25), Some('d'));
+        bptree.insert(45, 'g');
+        assert_eq!(bptree.search(&45), Some('g'));
+        bptree.insert(5, 'h');
+        assert_eq!(bptree.search(&5), Some('h'));
+        bptree.insert(60, 'i');
+        assert_eq!(bptree.search(&60), Some('i'));
+        // bptree.insert(25, 'j');
+        assert_eq!(bptree.search(&25), Some('d'));
+        assert_eq!(bptree.search(&5), Some('h'));
+        bptree.insert(17, 'j');
+        assert_eq!(bptree.search(&17), Some('j'));
+        bptree.insert(18, 'k');
+        assert_eq!(bptree.search(&18), Some('k'));
+        bptree.insert(32, 'l');
+        assert_eq!(bptree.search(&32), Some('l'));
+
+        bptree.print_tree();
     }
 
 

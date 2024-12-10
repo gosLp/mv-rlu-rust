@@ -5,7 +5,7 @@ use std::ptr;
 use std::sync::atomic::{AtomicPtr, AtomicU64, AtomicUsize, Ordering};
 
 const RLU_MAX_LOG_SIZE: usize = 128;
-const RLU_MAX_THREADS: usize = 32;
+pub const RLU_MAX_THREADS: usize = 32;
 const RLU_MAX_FREE_NODES: usize = 100;
 pub const PTR_ID_OBJ_COPY: usize = 0x12341234;
 
@@ -383,6 +383,18 @@ pub fn rlu_dereference<T: RluObj>(
         }
 
         let locking_thread = (*p_obj_copy).get_locking_thread_from_ws_obj();
+        if locking_thread >=RLU_MAX_THREADS {
+            // Invalid thread id - return the original object
+            dbg!("Invalid thread id: {}", locking_thread);
+            return p_obj;
+        }
+
+        // Verify thread exists before accessing
+        if (*rlu).threads[locking_thread].is_none() {
+            dbg!("Thread entry is None for ID", locking_thread);
+            return p_obj;
+        }
+
         if locking_thread == id {
             //locked by us!
             return p_obj_copy;
@@ -405,9 +417,17 @@ pub fn rlu_dereference<T: RluObj>(
 
 pub fn rlu_try_lock<T: RluObj>(rlu: *mut GlobalRlu<T>, id: usize, p_p_obj: *mut *mut T) -> bool {
     unsafe {
+        
+        assert!(id < RLU_MAX_THREADS, "Invalid thread ID in try_lock");
         let mut p_obj = *p_p_obj;
 
         assert!(!p_obj.is_null()); // cant lock null pointer!
+
+        // Verify thread exists
+        if (*rlu).threads[id].is_none() {
+            dbg!("Thread entry is None in try_lock", id);
+            return false;
+        }
 
         (*rlu).threads[id].as_mut().map_or_else(
             || unreachable!(),
