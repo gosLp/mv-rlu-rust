@@ -214,7 +214,15 @@ pub struct BPlusTree<K: Clone, V: Clone> {
 unsafe impl<K: Clone, V: Clone> Send for BPlusTree<K, V> {}
 unsafe impl<K: Clone, V: Clone > Sync for BPlusTree<K, V> {}
 
-impl<K: Ord + Clone + Copy + Debug, V: Ord + Clone + Copy + Debug> BPlusTree<K, V> {
+impl<K: Ord + Clone + Copy + Debug + Unpin, V: Ord + Clone + Copy + Debug + Unpin> BPlusTree<K, V> {
+    fn clone_ref(&self) -> Self {
+        let thread_id = rlu_thread_init(self.rlu);
+        BPlusTree {
+            rlu: self.rlu,
+            root: self.root,
+            id: thread_id,
+        }
+    }
     pub fn new() -> Self {
         // Initialise globa RLU
         let rlu = GlobalRlu::<Node<K,V>>::init_rlu();
@@ -532,11 +540,11 @@ impl<K: Ord + Clone + Copy + Debug, V: Ord + Clone + Copy + Debug> BPlusTree<K, 
         let new_leaf_ptr = Box::into_raw(new_leaf_box);
 
         // setup new leaf properties
-        let p_new_leaf = new_leaf_ptr;
-        // if !rlu_try_lock(self.rlu, self.id, &mut p_new_leaf) {
-        //     rlu_abort(self.rlu, self.id);
-        //     return (ptr::null_mut(), key);
-        // }
+        let mut p_new_leaf = new_leaf_ptr;
+        if !rlu_try_lock(self.rlu, self.id, &mut p_new_leaf) {
+            rlu_abort(self.rlu, self.id);
+            return (ptr::null_mut(), key);
+        }
 
         let new_leaf = &mut *p_new_leaf;
         let mut j =0;
@@ -554,6 +562,7 @@ impl<K: Ord + Clone + Copy + Debug, V: Ord + Clone + Copy + Debug> BPlusTree<K, 
 
         new_leaf.num_keys = (B+1) - split;
         new_leaf.next_leaf = old_next_leaf;
+        new_leaf.parent = leaf.parent;
         // (*new_leaf_ptr).parent = leaf.parent;
         print!("Leaf split done. Old leaf keys: {:?}, new leaf keys: {:?}", 
         &leaf.keys[..leaf.num_keys], 
@@ -654,15 +663,22 @@ impl<K: Ord + Clone + Copy + Debug, V: Ord + Clone + Copy + Debug> BPlusTree<K, 
             let mut p_left = left;
             let mut p_right = right;
 
-            // Lock both children to update their parent pointers
-            if !rlu_try_lock(self.rlu, self.id, &mut p_left) ||
-                !rlu_try_lock(self.rlu, self.id, &mut p_right) {
-                dbg!("Failed to lock children");
+            // Use link_nodes to establish parent-child relationships
+            if !self.link_nodes(root_ptr, left, 0) ||
+                !self.link_nodes(root_ptr, right, 1) {
                 rlu_abort(self.rlu, self.id);
                 return;
             }
-            (*p_left).parent = root_ptr;
-            (*p_right).parent = root_ptr;
+
+            // // Lock both children to update their parent pointers
+            // if !rlu_try_lock(self.rlu, self.id, &mut p_left) ||
+            //     !rlu_try_lock(self.rlu, self.id, &mut p_right) {
+            //     dbg!("Failed to lock children");
+            //     rlu_abort(self.rlu, self.id);
+            //     return;
+            // }
+            // (*p_left).parent = root_ptr;
+            // (*p_right).parent = root_ptr;
 
             // Update tree root
             self.root = root_ptr;
@@ -718,12 +734,18 @@ impl<K: Ord + Clone + Copy + Debug, V: Ord + Clone + Copy + Debug> BPlusTree<K, 
             parent_node.num_keys += 1;
 
             // Lock right child to update parent
-            let mut p_right = right;
-            if !rlu_try_lock(self.rlu, self.id, &mut p_right) {
+            // let mut p_right = right;
+            // if !rlu_try_lock(self.rlu, self.id, &mut p_right) {
+            //     rlu_abort(self.rlu, self.id);
+            //     return;
+            // }
+            // (*p_right).parent = p_parent;
+
+            // Use link_nodes to set up the new child's parent pointer
+            if !self.link_nodes(p_parent, right, pos + 1) {
                 rlu_abort(self.rlu, self.id);
                 return;
             }
-            (*p_right).parent = p_parent;
             
             return;
         }
@@ -796,13 +818,13 @@ impl<K: Ord + Clone + Copy + Debug, V: Ord + Clone + Copy + Debug> BPlusTree<K, 
         rlu_reader_lock(self.rlu, self.id);
         let new_parent_box = Box::new(Node::new(false));
         let new_parent_ptr = Box::into_raw(new_parent_box);
-        let p_new_parent = new_parent_ptr;
-        // if !rlu_try_lock(self.rlu, self.id, &mut p_new_parent) {
-        //     dbg!("Failed to lock new internal node after creation");
-        //     rlu_abort(self.rlu, self.id);
-        //     // rlu_reader_unlock(self.rlu, self.id);
-        //     return (ptr::null_mut(), split_key); // error scenario
-        // }
+        let mut p_new_parent = new_parent_ptr;
+        if !rlu_try_lock(self.rlu, self.id, &mut p_new_parent) {
+            dbg!("Failed to lock new internal node after creation");
+            rlu_abort(self.rlu, self.id);
+            // rlu_reader_unlock(self.rlu, self.id);
+            return (ptr::null_mut(), split_key); // error scenario
+        }
 
         let new_node = &mut *p_new_parent;
         let mut j = 0;
@@ -828,9 +850,13 @@ impl<K: Ord + Clone + Copy + Debug, V: Ord + Clone + Copy + Debug> BPlusTree<K, 
         // Set parents of moved children
         for i in 0..=new_node.num_keys {
             if !new_node.children[i].is_null() {
-                let mut child_ptr = new_node.children[i];
-                if rlu_try_lock(self.rlu, self.id, &mut child_ptr) {
-                    (*child_ptr).parent = p_new_parent;
+                // let mut child_ptr = new_node.children[i];
+                // if rlu_try_lock(self.rlu, self.id, &mut child_ptr) {
+                //     (*child_ptr).parent = p_new_parent;
+                // }
+                if !self.link_nodes(new_parent_ptr, new_node.children[i], i) {
+                    rlu_abort(self.rlu, self.id);
+                    return (ptr::null_mut(), split_key);
                 }
             }
         }
