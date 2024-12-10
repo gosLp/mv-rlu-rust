@@ -211,6 +211,9 @@ pub struct BPlusTree<K: Clone, V: Clone> {
     root: *mut Node<K, V>,
 }
 
+unsafe impl<K: Clone, V: Clone> Send for BPlusTree<K, V> {}
+unsafe impl<K: Clone, V: Clone > Sync for BPlusTree<K, V> {}
+
 impl<K: Ord + Clone + Copy + Debug, V: Ord + Clone + Copy + Debug> BPlusTree<K, V> {
     pub fn new() -> Self {
         // Initialise globa RLU
@@ -519,7 +522,11 @@ impl<K: Ord + Clone + Copy + Debug, V: Ord + Clone + Copy + Debug> BPlusTree<K, 
             leaf.values[i] = None;
         }
 
+        
+        // keep track of old next_leaf
+        let old_next_leaf = leaf.next_leaf;
         // Right half goes into new leaf
+
 
         let new_leaf_box = Box::new(Node::new(true));
         let new_leaf_ptr = Box::into_raw(new_leaf_box);
@@ -527,7 +534,6 @@ impl<K: Ord + Clone + Copy + Debug, V: Ord + Clone + Copy + Debug> BPlusTree<K, 
         // setup new leaf properties
         let p_new_leaf = new_leaf_ptr;
         // if !rlu_try_lock(self.rlu, self.id, &mut p_new_leaf) {
-        //     dbg!(" Failed to unclock new leaf");
         //     rlu_abort(self.rlu, self.id);
         //     return (ptr::null_mut(), key);
         // }
@@ -547,7 +553,7 @@ impl<K: Ord + Clone + Copy + Debug, V: Ord + Clone + Copy + Debug> BPlusTree<K, 
 
 
         new_leaf.num_keys = (B+1) - split;
-        new_leaf.next_leaf = leaf.next_leaf;
+        new_leaf.next_leaf = old_next_leaf;
         // (*new_leaf_ptr).parent = leaf.parent;
         print!("Leaf split done. Old leaf keys: {:?}, new leaf keys: {:?}", 
         &leaf.keys[..leaf.num_keys], 
@@ -837,6 +843,51 @@ impl<K: Ord + Clone + Copy + Debug, V: Ord + Clone + Copy + Debug> BPlusTree<K, 
 
         // rlu_reader_unlock(self.rlu, self.id);
         (new_parent_ptr, split_key)
+    }
+
+    pub fn range_search(&self, start_key: &K, end_key: &K) -> Vec<(K, V)> {
+        let mut result = Vec::new();
+        
+        unsafe {
+            rlu_reader_lock(self.rlu, self.id);
+            
+            // Find the leaf containing start_key
+            let mut current = self.find_leaf_for_key(start_key);
+            if current.is_null() {
+                rlu_reader_unlock(self.rlu, self.id);
+                return result;
+            }
+            
+            // Traverse the leaves using next_leaf pointers
+            loop {
+                let node = &*current;
+                
+                // Add all keys/values in current leaf that are in range
+                for i in 0..node.num_keys {
+                    if let (Some(k), Some(v)) = (&node.keys[i], &node.values[i]) {
+                        if k >= start_key && k <= end_key {
+                            result.push((*k, *v));
+                        }
+                        if k > end_key {
+                            rlu_reader_unlock(self.rlu, self.id);
+                            return result;
+                        }
+                    }
+                }
+                
+                // Move to next leaf if it exists
+                if node.next_leaf.is_null() {
+                    break;
+                }
+                current = rlu_dereference(self.rlu, self.id, node.next_leaf);
+                if current.is_null() {
+                    break;
+                }
+            }
+            
+            rlu_reader_unlock(self.rlu, self.id);
+        }
+        result
     }
 
     

@@ -1,5 +1,8 @@
 #[cfg(test)]
 mod tests {
+    use std::sync::Barrier;
+    use std::sync::Arc;
+    use std::thread;
     use rlu::BPlusTree;
 
     #[test]
@@ -54,6 +57,8 @@ mod tests {
         assert_eq!(bptree.search(&32), Some('l'));
 
         bptree.print_tree();
+        // Vec::new(bptree.range_search(&5, &60));
+        assert_eq!(Vec::from(bptree.range_search(&5, &60)), vec![(5, 'h'), (10, 'a'), (15, 'c'), (17, 'j'), (18, 'k'), (20, 'b'), (25, 'd'), (32, 'l'), (35, 'e'), (40, 'f'), (45, 'g'), (60, 'i')]);
     }
 
 
