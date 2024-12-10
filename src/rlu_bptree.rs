@@ -7,9 +7,9 @@ use std::alloc::{alloc, Layout};
 
 
 // lets define the node order for simplicity
-const B: usize = 4; // small order for demonstration
+const B: usize = 5; // small order for demonstration
 
-
+#[derive(Debug)]
 pub struct Node<K:Clone , V: Clone> {
     // The RLU header for managing concurreny:
     pub hdr: RluObjHdr<Node<K, V>>,
@@ -111,7 +111,7 @@ impl<K: Clone, V: Clone> RluObj for Node<K, V> {
     }
 
     fn get_copy_with_ws_hdr(&self, run_counter: u64, thread_id: usize) -> Self {
-        // Creat e a copy of the node:
+        // Create a copy of the node:
         let mut copy = Node {
             hdr: RluObjHdr {
                 p_obj_copy: AtomicPtr::new(ptr::null_mut()),
@@ -162,37 +162,44 @@ impl<K: Clone, V: Clone> RluObj for Node<K, V> {
             (*orig).num_keys = self.num_keys;
             for i in 0..B {
                 (*orig).keys[i] = self.keys[i].clone();
+                assert!((*orig).num_keys <= B, "num_keys out of range after copy_back");
                 (*orig).values[i] = self.values[i].clone();
             }
-            (*orig).children[B] = self.children[B];
+            for i in 0..=B {
+                (*orig).children[i] = self.children[i];
+            }
+            (*orig).parent = self.parent;
             (*orig).next_leaf = self.next_leaf;
+            // Clear the ws_hdr so this node is no longer considered a copy
+            (*orig).hdr.ws_hdr = None;
             // IMPORTANT: unlock the node after copy-back
+            
             (*orig).hdr.p_obj_copy.store(ptr::null_mut(), Ordering::SeqCst);
         }
         dbg!("copy_back_to_original completed");
     }
 
     fn unlock_original(&self) {
-        dbg!("unlock_original called");
-        let orig = self.get_p_original();
-        unsafe {
-            (*orig)
-                .hdr
-                .p_obj_copy
-                .store(PTR_ID_OBJ_COPY as *mut Self, Ordering::SeqCst);
-        }
-        dbg!("unlock_original completed");
+        // dbg!("unlock_original called");
+        // let orig = self.get_p_original();
+        // unsafe {
+        //     (*orig)
+        //         .hdr
+        //         .p_obj_copy
+        //         .store(ptr::null_mut(), Ordering::SeqCst);
+        // }
+        // dbg!("unlock_original completed");
     }
 
     fn unlock(&self) {
         // Just unlock this node, if its locked. if its a copy we set original's p_obj_copy to PTR_ID_OBJ_COPY
         // Actually, unlcok is typically only called on the orignal or somethin  or something that was locked
         // Acoording to this RLU logic, unlocking happens via unlock_original().
-        self.unlock_original();
+        // self.unlock_original();
     }
 }
 
-
+#[derive(Debug)]
 pub struct BPlusTree<K: Clone, V: Clone> {
     rlu: *mut GlobalRlu<Node<K, V>>,
     id: usize,
@@ -228,6 +235,7 @@ impl<K: Ord + Clone + Copy + Debug, V: Ord + Clone + Copy + Debug> BPlusTree<K, 
 
             // If tree is empty
             let mut node_ptr = rlu_dereference(self.rlu, self.id, self.root);
+            dbg!("search called and root is {:?}", &*node_ptr);
             if node_ptr.is_null() {
                 // othing in tree
                 rlu_reader_unlock(self.rlu, self.id);
@@ -384,6 +392,7 @@ impl<K: Ord + Clone + Copy + Debug, V: Ord + Clone + Copy + Debug> BPlusTree<K, 
             let leaf_ref = &mut *p_leaf;
 
             //Insert ey into leaf. If there's more room, just insert
+            assert!(leaf_ref.num_keys <= B, "num_keys out of range before insertion");
             if leaf_ref.num_keys < B {
                 dbg!(" Leaf has space, inserting key direectly");
                 self.insert_into_leaf(leaf_ref, key, value);
@@ -401,16 +410,30 @@ impl<K: Ord + Clone + Copy + Debug, V: Ord + Clone + Copy + Debug> BPlusTree<K, 
                 // Unlock leaf and commit to ensure leaf changes are visible before dealing with parent
                 // Note: In traditional RLU usage, you might choose to do all changes in one atomic RLU write transaction,
                 // but let's keep it simple and commit step by step.
-                rlu_reader_unlock(self.rlu, self.id);
+                // rlu_reader_unlock(self.rlu, self.id);
 
                 // Now we must insert `split_key` into the parent. This means we must:
                 // 1) Re-lock as a reader
                 // 2) Find the parent of this leaf (for now, assume we store parent pointers or handle a root special case)
                 // 3) Lock parent and insert the split_key as a separator, possibly splitting again if needed.
 
-                rlu_reader_lock(self.rlu, self.id);
-                self.insert_into_parent(leaf_ptr, new_leaf_ptr, split_key);
-                rlu_reader_unlock(self.rlu, self.id);
+                // rlu_reader_lock(self.rlu, self.id);
+                // let root = self.root; // stable pointer to the root location
+                // let node_ptr = rlu_dereference(self.rlu, self.id, root);
+                // println!("Root after commit: {:?}", &*node_ptr);
+                // // Instead of using leaf_ptr directly, find the leaf again:
+                let leaf_ptr_deref = self.find_leaf_for_key(&split_key);
+                if leaf_ptr_deref.is_null() {
+                    dbg!("could not find leaf after commit");
+                    rlu_reader_unlock(self.rlu, self.id);
+                    return;
+                }
+
+                // // Now re-derive new_leaf_ptr:
+                let new_leaf_ptr_deref = rlu_dereference(self.rlu, self.id, new_leaf_ptr);
+                self.insert_into_parent(leaf_ptr_deref, new_leaf_ptr_deref, split_key);
+                // rlu_reader_unlock(self.rlu, self.id);
+                return;
 
             }
 
@@ -500,6 +523,7 @@ impl<K: Ord + Clone + Copy + Debug, V: Ord + Clone + Copy + Debug> BPlusTree<K, 
     }
 
     unsafe fn insert_into_leaf(&self, leaf: &mut Node<K,V>, key: K, value: V) {
+        dbg!("insert_into_leaf called", &key, &value);
         // insert key in sorted orer
         let pos = leaf.keys.iter()
                                     .take(leaf.num_keys)
@@ -515,7 +539,11 @@ impl<K: Ord + Clone + Copy + Debug, V: Ord + Clone + Copy + Debug> BPlusTree<K, 
         leaf.keys[pos] = Some(key);
         leaf.values[pos] = Some(value);
         leaf.num_keys += 1;
+        assert!(leaf.num_keys <= B, "num_keys exceeded B after inserting into leaf");
         dbg!("Inserted keys and values are:");
+        dbg!("number of keys are {:?}", leaf.num_keys);
+        // dbg!("the root of this leaf is {:?}", );
+        dbg!("the root looks like {:?}", &self.root);
         dbg!(&leaf.keys[..leaf.num_keys], &leaf.values[..leaf.num_keys]);
 
     }
@@ -558,7 +586,15 @@ impl<K: Ord + Clone + Copy + Debug, V: Ord + Clone + Copy + Debug> BPlusTree<K, 
         let new_leaf_box = Box::new(Node::new(true));
         let new_leaf_ptr = Box::into_raw(new_leaf_box);
 
-        let new_leaf = &mut *new_leaf_ptr;
+        // setup new leaf properties
+        let mut p_new_leaf = new_leaf_ptr;
+        if !rlu_try_lock(self.rlu, self.id, &mut p_new_leaf) {
+            dbg!(" Failed to unclock new leaf");
+            rlu_abort(self.rlu, self.id);
+            return (ptr::null_mut(), key);
+        }
+
+        let new_leaf = &mut *p_new_leaf;
         let mut j =0;
 
         for i in split..(B+1) {
@@ -567,9 +603,13 @@ impl<K: Ord + Clone + Copy + Debug, V: Ord + Clone + Copy + Debug> BPlusTree<K, 
             j += 1;
         }
 
+        assert!(leaf.num_keys <= B, "Left leaf too many keys after split");
+        assert!(new_leaf.num_keys <= B, "Right leaf too many keys after split");
+
+
         new_leaf.num_keys = (B+1) - split;
         new_leaf.next_leaf = leaf.next_leaf;
-        (*new_leaf_ptr).parent = leaf.parent;
+        // (*new_leaf_ptr).parent = leaf.parent;
         print!("Leaf split done. Old leaf keys: {:?}, new leaf keys: {:?}", 
         &leaf.keys[..leaf.num_keys], 
         &(*new_leaf_ptr).keys[..(*new_leaf_ptr).num_keys]);
@@ -629,6 +669,7 @@ impl<K: Ord + Clone + Copy + Debug, V: Ord + Clone + Copy + Debug> BPlusTree<K, 
             dbg!("No parent, creating a new root");
             // rlu_reader_lock(self.rlu, self.id);
             let root_box = Box::new(Node::new(false));
+            dbg!("the ws_hdr of new root is {:?}", &root_box.hdr.ws_hdr);
             let root_ptr = Box::into_raw(root_box);
 
 
@@ -637,7 +678,7 @@ impl<K: Ord + Clone + Copy + Debug, V: Ord + Clone + Copy + Debug> BPlusTree<K, 
             if !rlu_try_lock(self.rlu, self.id, &mut p_root) {
                 dbg!("Failed to  lock new root");
                 rlu_abort(self.rlu, self.id);
-                rlu_reader_unlock(self.rlu, self.id);
+                // rlu_reader_unlock(self.rlu, self.id);
                 return; // try again or handle error
             }
             print!("Locked new root for insertion");
@@ -646,19 +687,38 @@ impl<K: Ord + Clone + Copy + Debug, V: Ord + Clone + Copy + Debug> BPlusTree<K, 
             root_node.keys[0] = Some(key);
             root_node.children[0] = left;
             root_node.children[1] = right;
-            (*left).parent = p_root;
-            (*right).parent = p_root;
+
+            // Update parent pointers
+            let mut p_left = left;
+            let mut p_right = right;
+
+            // Lock both children to update their parent pointers
+            if !rlu_try_lock(self.rlu, self.id, &mut p_left) ||
+                !rlu_try_lock(self.rlu, self.id, &mut p_right) {
+                dbg!("Failed to lock children");
+                rlu_abort(self.rlu, self.id);
+                return;
+            }
+            (*p_left).parent = root_ptr;
+            (*p_right).parent = root_ptr;
 
             // Update tree root
-            self.root = p_root;
+            self.root = root_ptr;
 
-            println!("Created new root with key: {:?}", key);
-            println!("Root keys: {:?}", &(*p_root).keys[..(*p_root).num_keys]);
-            println!("Left child keys: {:?}", &(*left).keys[..(*left).num_keys]);
-            println!("Right child keys: {:?}", &(*right).keys[..(*right).num_keys]);
+            // Now commit the transaction which will copy back all locked nodes
+            rlu_reader_unlock(self.rlu, self.id);
+
+            // println!("Created new root with key: {:?}", key);
+            // println!("Root keys: {:?}", &(*p_root).keys[..(*p_root).num_keys]);
+            // println!("Left child keys: {:?}", &(*left).keys[..(*left).num_keys]);
+            // println!("Right child keys: {:?}", &(*right).keys[..(*right).num_keys]);
 
 
-            dbg!("New root created", &root_node.keys[..root_node.num_keys]);
+            // Start a new read transaction to ensure we see the committed state
+            rlu_reader_lock(self.rlu, self.id);
+            let root_check = rlu_dereference(self.rlu, self.id, self.root);
+            dbg!("New root state after commit:", &*root_check);
+            rlu_reader_unlock(self.rlu, self.id);
             // rlu_reader_unlock(self.rlu, self.id);
             return;
         }
@@ -686,6 +746,9 @@ impl<K: Ord + Clone + Copy + Debug, V: Ord + Clone + Copy + Debug> BPlusTree<K, 
             .take(parent_node.num_keys)
             .position(|k_opt| k_opt.as_ref().map_or(true, |k| k > &key))
             .unwrap_or(parent_node.num_keys);
+
+        assert!(parent_node.num_keys < B, "Parent full before insertion! Must split first.");
+
 
         // Make room for new key/child
         for i in (pos..parent_node.num_keys).rev() {

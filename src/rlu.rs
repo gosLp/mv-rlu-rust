@@ -9,6 +9,7 @@ const RLU_MAX_THREADS: usize = 32;
 const RLU_MAX_FREE_NODES: usize = 100;
 pub const PTR_ID_OBJ_COPY: usize = 0x12341234;
 
+#[derive(Debug)]
 pub struct WsHdr<T: RluObj> {
     pub p_obj_actual: *mut T,
     pub run_counter: u64,
@@ -98,6 +99,7 @@ pub trait RluObj {
     fn unlock(&self);
 }
 
+#[derive(Debug)]
 pub struct RluObjHdr<T: RluObj> {
     pub p_obj_copy: AtomicPtr<T>,
     pub ws_hdr: Option<WsHdr<T>>, //only Some() if we are a copy, None at start
@@ -414,6 +416,7 @@ pub fn rlu_try_lock<T: RluObj>(rlu: *mut GlobalRlu<T>, id: usize, p_p_obj: *mut 
             },
         );
         let mut p_obj_copy = (*p_obj).get_p_obj_copy();
+        // dbg!("the p_obj_copy: {:?}", p_obj_copy);
         if p_obj_copy == mem::transmute(PTR_ID_OBJ_COPY) {
             //tried to lock a copy!
             //get original
@@ -433,6 +436,7 @@ pub fn rlu_try_lock<T: RluObj>(rlu: *mut GlobalRlu<T>, id: usize, p_p_obj: *mut 
                         .map(|thread| thread.run_counter.load(Ordering::SeqCst))
                         .unwrap()
                 {
+                    // dbg!("same thread");
                     // already locked by current execution of this thread
                     *p_p_obj = p_obj_copy;
                     return true;
@@ -456,6 +460,7 @@ pub fn rlu_try_lock<T: RluObj>(rlu: *mut GlobalRlu<T>, id: usize, p_p_obj: *mut 
                     .unwrap()
             },
         );
+        // dbg!("the obj_copy:", obj_copy.get_p_obj_copy());
         // My design here differs slightly from the C implementation, in that it puts the entire
         // copy in the write log before trying to compare-and-swap the pointer in the original.
 
