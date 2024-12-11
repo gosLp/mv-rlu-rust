@@ -215,7 +215,7 @@ unsafe impl<K: Clone, V: Clone> Send for BPlusTree<K, V> {}
 unsafe impl<K: Clone, V: Clone > Sync for BPlusTree<K, V> {}
 
 impl<K: Ord + Clone + Copy + Debug + Unpin, V: Ord + Clone + Copy + Debug + Unpin> BPlusTree<K, V> {
-    fn clone_ref(&self) -> Self {
+    pub fn clone_ref(&self) -> Self {
         let thread_id = rlu_thread_init(self.rlu);
         BPlusTree {
             rlu: self.rlu,
@@ -394,6 +394,7 @@ impl<K: Ord + Clone + Copy + Debug + Unpin, V: Ord + Clone + Copy + Debug + Unpi
                 // Need to split leaf
                 dbg!("Leaf is full, splitting");
                 let (new_leaf_ptr, split_key) = self.split_leaf(leaf_ref, key, value);
+                dbg!(" new leaf and split key are", &*new_leaf_ptr, &split_key);
                 // In insert_into_parent after creating new root:
 
                 // WE just created a new leaf and got a split_key to push up
@@ -533,13 +534,13 @@ impl<K: Ord + Clone + Copy + Debug + Unpin, V: Ord + Clone + Copy + Debug + Unpi
         
         // keep track of old next_leaf
         let old_next_leaf = leaf.next_leaf;
+
         // Right half goes into new leaf
-
-
         let new_leaf_box = Box::new(Node::new(true));
         let new_leaf_ptr = Box::into_raw(new_leaf_box);
 
         // setup new leaf properties
+        // lock the new leaf
         let mut p_new_leaf = new_leaf_ptr;
         if !rlu_try_lock(self.rlu, self.id, &mut p_new_leaf) {
             rlu_abort(self.rlu, self.id);
@@ -556,24 +557,31 @@ impl<K: Ord + Clone + Copy + Debug + Unpin, V: Ord + Clone + Copy + Debug + Unpi
         }
         // new_leaf.num_keys = j;
 
-        assert!(leaf.num_keys <= B, "Left leaf too many keys after split");
-        assert!(new_leaf.num_keys <= B, "Right leaf too many keys after split");
+        // assert!(leaf.num_keys <= B, "Left leaf too many keys after split");
+        // assert!(new_leaf.num_keys <= B, "Right leaf too many keys after split");
 
 
         new_leaf.num_keys = (B+1) - split;
+        // fix leaf links
         new_leaf.next_leaf = old_next_leaf;
-        new_leaf.parent = leaf.parent;
+        // new_leaf.parent = leaf.parent;
         // (*new_leaf_ptr).parent = leaf.parent;
-        print!("Leaf split done. Old leaf keys: {:?}, new leaf keys: {:?}", 
-        &leaf.keys[..leaf.num_keys], 
-        &(*new_leaf_ptr).keys[..(*new_leaf_ptr).num_keys]);
+        // print!("Leaf split done. Old leaf keys: {:?}, new leaf keys: {:?}", 
+        // &leaf.keys[..leaf.num_keys], 
+        // &(*new_leaf_ptr).keys[..(*new_leaf_ptr).num_keys]);
         
+        // leaf.next_leaf = p_new_leaf;
         leaf.next_leaf = new_leaf_ptr;
+        // Important: Keep parent pointer of new leaf temporarily null
+        // It will be set properly in insert_into_parent
+        new_leaf.parent = ptr::null_mut();
 
         // The split key for the parent is the first key of the new leaf
         let split_key = new_leaf.keys[0].as_ref().unwrap().clone();
+        dbg!("look at the new right leaf", &*p_new_leaf);
 
         (new_leaf_ptr, split_key)
+        // (p_new_leaf, split_key)
     }
 
     // unsafe fn insert_into_parent(&self, old_node: *mut Node<K, V>, new_node: *mut Node<K, V>, key: K) {
@@ -614,33 +622,37 @@ impl<K: Ord + Clone + Copy + Debug + Unpin, V: Ord + Clone + Copy + Debug + Unpi
     }
 
     // helper function to safely set up parent-child relationships
-    unsafe fn link_nodes(&self, parent: *mut Node<K, V>, child: *mut Node<K, V>, child_index: usize) -> bool {
-        let mut p_parent = parent;
-        let mut p_child = child;
+    // unsafe fn link_nodes(&self, parent: *mut Node<K, V>, child: *mut Node<K, V>, child_index: usize) -> bool {
+    //     let mut p_parent = parent;
+    //     let mut p_child = child;
         
-        // Lock both nodes in consistent order
-        if !rlu_try_lock(self.rlu, self.id, &mut p_parent) ||
-        !rlu_try_lock(self.rlu, self.id, &mut p_child) {
-            rlu_abort(self.rlu, self.id);
-            return false;
-        }
+    //     // Lock both nodes in consistent order
+    //     if !rlu_try_lock(self.rlu, self.id, &mut p_parent) ||
+    //     !rlu_try_lock(self.rlu, self.id, &mut p_child) {
+    //         rlu_abort(self.rlu, self.id);
+    //         return false;
+    //     }
         
-        (*p_parent).children[child_index] = child;
-        (*p_child).parent = parent;
-        true
-    }
+    //     (*p_parent).children[child_index] = child;
+    //     (*p_child).parent = parent;
+    //     true
+    // }
 
-    unsafe fn insert_into_parent(&mut self, left: *mut Node<K, V>, right: *mut Node<K, V>, key: K) {
+    unsafe fn insert_into_parent(&mut self, left: *mut Node<K, V>, right: *mut Node<K, V>, key: K) -> bool {
         dbg!("insert_into_parent called", &key);
+        dbg!("Left node: {:?}", &*left);
+        dbg!("Right node: {:?}", &*right);
 
         let left_node = &*left;
         let parent_ptr = left_node.parent;
+
         if parent_ptr.is_null() {
             // create a new root
             dbg!("No parent, creating a new root");
-            // rlu_reader_lock(self.rlu, self.id);
+            
+            // create a new root
             let root_box = Box::new(Node::new(false));
-            dbg!("the ws_hdr of new root is {:?}", &root_box.hdr.ws_hdr);
+            // dbg!("the ws_hdr of new root is {:?}", &root_box.hdr.ws_hdr);
             let root_ptr = Box::into_raw(root_box);
 
 
@@ -649,10 +661,10 @@ impl<K: Ord + Clone + Copy + Debug + Unpin, V: Ord + Clone + Copy + Debug + Unpi
             if !rlu_try_lock(self.rlu, self.id, &mut p_root) {
                 dbg!("Failed to  lock new root");
                 rlu_abort(self.rlu, self.id);
-                // rlu_reader_unlock(self.rlu, self.id);
-                return; // try again or handle error
+                return false; // try again or handle error
             }
-            print!("Locked new root for insertion");
+
+
             let root_node = &mut *p_root;
             root_node.num_keys = 1;
             root_node.keys[0] = Some(key);
@@ -660,15 +672,24 @@ impl<K: Ord + Clone + Copy + Debug + Unpin, V: Ord + Clone + Copy + Debug + Unpi
             root_node.children[1] = right;
 
             // Update parent pointers
-            let mut p_left = left;
-            let mut p_right = right;
+            // let mut p_left = left;
+            // let mut p_right = right;
+            (*left).parent = root_ptr;
+            (*right).parent = root_ptr;
+
+            
+
+            dbg!("New root created with key {:?}", key);
+            dbg!("Root ptr: 0x{:x}", root_ptr as usize);
+            dbg!("Left ptr: 0x{:x}", left as usize);
+            dbg!("Right ptr: 0x{:x}", right as usize);
 
             // Use link_nodes to establish parent-child relationships
-            if !self.link_nodes(root_ptr, left, 0) ||
-                !self.link_nodes(root_ptr, right, 1) {
-                rlu_abort(self.rlu, self.id);
-                return;
-            }
+            // if !self.link_nodes(root_ptr, left, 0) ||
+            //     !self.link_nodes(root_ptr, right, 1) {
+            //     rlu_abort(self.rlu, self.id);
+            //     return;
+            // }
 
             // // Lock both children to update their parent pointers
             // if !rlu_try_lock(self.rlu, self.id, &mut p_left) ||
@@ -683,6 +704,7 @@ impl<K: Ord + Clone + Copy + Debug + Unpin, V: Ord + Clone + Copy + Debug + Unpi
             // Update tree root
             self.root = root_ptr;
 
+            // self.debug_print_tree();
             // Now commit the transaction which will copy back all locked nodes
             // rlu_reader_unlock(self.rlu, self.id);
 
@@ -698,8 +720,10 @@ impl<K: Ord + Clone + Copy + Debug + Unpin, V: Ord + Clone + Copy + Debug + Unpi
             // dbg!("New root state after commit:", &*root_check);
             // rlu_reader_unlock(self.rlu, self.id);
             // rlu_reader_unlock(self.rlu, self.id);
-            return;
+            return true;
         }
+
+        // LOCK EXISTING PARENT
 
         dbg!("Parent exists, inserting key into parent");
         // dbg!("Parent keys before insert: {:?}", &(*parent_ptr).keys[..(*parent_ptr).num_keys]);
@@ -710,19 +734,21 @@ impl<K: Ord + Clone + Copy + Debug + Unpin, V: Ord + Clone + Copy + Debug + Unpi
         if !rlu_try_lock(self.rlu, self.id, &mut p_parent) {
             dbg!("Could not lock parent, aborting insert_into_parent");
             rlu_abort(self.rlu, self.id);
-            // rlu_reader_unlock(self.rlu, self.id);
-            return;
+            return false;
         }
 
         let parent_node = &mut *p_parent;
 
-        if parent_node.num_keys <= B {
-            // Simple insert case
-            let pos = parent_node.keys.iter()
-            .take(parent_node.num_keys)
+        // FInd insert position in parent
+        let pos = parent_node.keys[..parent_node.num_keys]
+            .iter()
             .position(|k_opt| k_opt.as_ref().map_or(true, |k| k > &key))
             .unwrap_or(parent_node.num_keys);
 
+        dbg!("position in parent for key {:?} is {:?}", key, pos);
+
+        if parent_node.num_keys < B {
+            // Simple insert case
             // Shift existing keys/children
             for i in (pos..parent_node.num_keys).rev() {
                 parent_node.keys[i+1] = parent_node.keys[i].take();
@@ -733,6 +759,9 @@ impl<K: Ord + Clone + Copy + Debug + Unpin, V: Ord + Clone + Copy + Debug + Unpi
             parent_node.children[pos+1] = right;
             parent_node.num_keys += 1;
 
+            // Update the right node's parent pointer
+            (*right).parent = parent_ptr;
+
             // Lock right child to update parent
             // let mut p_right = right;
             // if !rlu_try_lock(self.rlu, self.id, &mut p_right) {
@@ -742,14 +771,15 @@ impl<K: Ord + Clone + Copy + Debug + Unpin, V: Ord + Clone + Copy + Debug + Unpi
             // (*p_right).parent = p_parent;
 
             // Use link_nodes to set up the new child's parent pointer
-            if !self.link_nodes(p_parent, right, pos + 1) {
-                rlu_abort(self.rlu, self.id);
-                return;
-            }
+            // if !self.link_nodes(p_parent, right, pos + 1) {
+            //     rlu_abort(self.rlu, self.id);
+            //     return;
+            // }
             
-            return;
+            return true;
         }
         println!("Inserting key {:?} into parent. Parent keys before: {:?}", key, &parent_node.keys[..parent_node.num_keys]);
+        dbg!("Inserting key into parent. Parent keys before:", &parent_node.keys[..parent_node.num_keys]);
 
         // // Insert the key into the parent, keeping keys sorted:
         // let pos = parent_node.keys.iter()
@@ -777,98 +807,172 @@ impl<K: Ord + Clone + Copy + Debug + Unpin, V: Ord + Clone + Copy + Debug + Unpi
             // Fits, no split needed
             // rlu_reader_unlock(self.rlu, self.id);
         
+        // Parent is full, need to split
         // Parent needs splitting
         let (new_parent_ptr, parent_split_key) = self.split_internal_node(parent_node);
-        if !new_parent_ptr.is_null() {
-            self.insert_into_parent(p_parent, new_parent_ptr, parent_split_key);
+        dbg!("new_parent , left node and parent_split_key are", &*new_parent_ptr, &*parent_node, &parent_split_key);
+        if new_parent_ptr.is_null() {
+            // self.insert_into_parent(p_parent, new_parent_ptr, parent_split_key);
+            return false;
         }
 
 
-
+        self.insert_into_parent(p_parent, new_parent_ptr, parent_split_key)
 
     }
 
     unsafe fn split_internal_node(&self, node: &mut Node<K,V>) -> (*mut Node<K,V>, K) {
+        dbg!("Splitting internal node, parent node looks like:", &node.keys[..node.num_keys]);
         let mut temp_keys = Vec::with_capacity(B+1);
         let mut temp_children = Vec::with_capacity(B+2);
+
+        // Copy existing keys and children
         for i in 0..node.num_keys {
             temp_keys.push(node.keys[i].take().unwrap());
-        }
-        for i in 0..=node.num_keys {
             temp_children.push(node.children[i]);
         }
+        temp_children.push(node.children[node.num_keys]);
+        dbg!("Temp keys and children", &temp_keys, &temp_children);
+
+        // for i in 0..=node.num_keys {
+        //     temp_children.push(node.children[i]);
+        // }
 
         let split = (B+1)/2;
-        let split_key = temp_keys[split].clone();
-        
+        let split_key = temp_keys[split -  1].clone();
+        dbg!("Split key is", &split_key);
+
+        // Reset left node
         // Left node keeps keys[0..split], right node gets keys[split+1..]
-        for i in 0..split {
+        for i in 0..split - 1{
             node.keys[i] = Some(temp_keys[i].clone());
             node.children[i] = temp_children[i];
         }
-        node.children[split] = temp_children[split];
-        node.num_keys = split;
 
-        for i in split..B {
+        node.children[split - 1] = temp_children[split - 1];
+        node.num_keys = split - 1;
+
+        // Update parent pointers for left node's children
+        for i in 0..=node.num_keys {
+            if !node.children[i].is_null() {
+                (*node.children[i]).parent = node as *mut Node<K, V>;
+            }
+        }
+
+        for i in split - 1..B {
             node.keys[i] = None;
-            node.children[i+1] = ptr::null_mut();
+            if i < B{
+                node.children[i+1] = ptr::null_mut();
+            }
+            
         }
+        dbg!("Left node after split and children is :", &node.keys[..node.num_keys], &node.children[..node.num_keys+1]);
+        dbg!("left node parent is ", &node.parent);
 
+        // create nnew right node
         // New node (right side)
-        rlu_reader_lock(self.rlu, self.id);
-        let new_parent_box = Box::new(Node::new(false));
-        let new_parent_ptr = Box::into_raw(new_parent_box);
-        let mut p_new_parent = new_parent_ptr;
-        if !rlu_try_lock(self.rlu, self.id, &mut p_new_parent) {
-            dbg!("Failed to lock new internal node after creation");
-            rlu_abort(self.rlu, self.id);
-            // rlu_reader_unlock(self.rlu, self.id);
-            return (ptr::null_mut(), split_key); // error scenario
-        }
+        let new_node_box = Box::new(Node::new(false));
+        let new_node_ptr = Box::into_raw(new_node_box);
 
-        let new_node = &mut *p_new_parent;
+        let mut p_new_node = new_node_ptr;
+        if !rlu_try_lock(self.rlu, self.id, &mut p_new_node) {
+            rlu_abort(self.rlu, self.id);
+            return (ptr::null_mut(), split_key);
+        }
+        let new_node = &mut *p_new_node;
+
+        // Fill the right node
         let mut j = 0;
-        for i in (split+1)..(B+1) {
+        for i in split..temp_keys.len() {
             new_node.keys[j] = Some(temp_keys[i].clone());
             new_node.children[j] = temp_children[i];
-            // Set children's parent
-            if !new_node.children[j].is_null() {
-                (*new_node.children[j]).parent = p_new_parent;
-            }
+            // Update child's parent pointer
+            // if !temp_children[i].is_null() {
+            //     (*temp_children[i]).parent = new_node_ptr;
+            // }
             j += 1;
         }
-        new_node.children[j] = temp_children[B+1]; 
-        if !new_node.children[j].is_null() {
-            (*new_node.children[j]).parent = p_new_parent;
-        }
+        new_node.children[j] = temp_children[temp_children.len() - 1];
         new_node.num_keys = j;
-        // dbg!("Split internal node", left_keys = &node.keys[..node.num_keys], right_keys = &new_node.keys[..new_node.num_keys]);
-        dbg!("Split internal node");
-        dbg!(&node.keys[..node.num_keys], &new_node.keys[..new_node.num_keys]);
 
-        
-        // Set parents of moved children
+        // Update parent pointers for all children in right node
         for i in 0..=new_node.num_keys {
             if !new_node.children[i].is_null() {
-                // let mut child_ptr = new_node.children[i];
-                // if rlu_try_lock(self.rlu, self.id, &mut child_ptr) {
-                //     (*child_ptr).parent = p_new_parent;
-                // }
-                if !self.link_nodes(new_parent_ptr, new_node.children[i], i) {
-                    rlu_abort(self.rlu, self.id);
-                    return (ptr::null_mut(), split_key);
-                }
+                (*new_node.children[i]).parent = p_new_node;
             }
         }
 
-        println!("Splitting internal node with {:?} keys", &temp_keys);
-        println!("Split key: {:?}", split_key);
-        println!("Left node keys after split: {:?}", &node.keys[..node.num_keys]);
-        println!("New node keys after split: {:?}", &(*p_new_parent).keys[..(*p_new_parent).num_keys]);
+        dbg!(" right node after split", &new_node.keys[..new_node.num_keys], &new_node.children[..new_node.num_keys+1]);
+
+
+        // let temp_children_store = temp_children.clone();
+        // dbg!("Temp children store", &temp_children_store);
+        // new_node.children[j] = temp_children_store[temp_children_store.len() - 1];
+        // if !temp_children[temp_children_store.len() - 1].is_null() {
+        //     (*temp_children[temp_children_store.len() - 1]).parent = new_node_ptr;
+        // }
+        // new_node.num_keys = j;
+
+        // Set parent pointer for new node (will be properly set in insert_into_parent)
+        dbg!("Right node after setup:", &new_node.keys[..new_node.num_keys]);
+        dbg!("Right node children:", &new_node.children[..=new_node.num_keys]);
+        dbg!("Split key being returned:", split_key);
+        dbg!("new_node is", &*p_new_node);
+
+        // let new_parent_box = Box::new(Node::new(false));
+        // let new_parent_ptr = Box::into_raw(new_parent_box);
+        // let mut p_new_parent = new_parent_ptr;
+        // if !rlu_try_lock(self.rlu, self.id, &mut p_new_parent) {
+        //     dbg!("Failed to lock new internal node after creation");
+        //     rlu_abort(self.rlu, self.id);
+        //     // rlu_reader_unlock(self.rlu, self.id);
+        //     return (ptr::null_mut(), split_key); // error scenario
+        // }
+
+        // let new_node = &mut *p_new_parent;
+        // let mut j = 0;
+        // for i in (split+1)..(B+1) {
+        //     new_node.keys[j] = Some(temp_keys[i].clone());
+        //     new_node.children[j] = temp_children[i];
+        //     // Set children's parent
+        //     if !new_node.children[j].is_null() {
+        //         (*new_node.children[j]).parent = p_new_parent;
+        //     }
+        //     j += 1;
+        // }
+        // new_node.children[j] = temp_children[B+1]; 
+        // if !new_node.children[j].is_null() {
+        //     (*new_node.children[j]).parent = p_new_parent;
+        // }
+        // new_node.num_keys = j;
+        // dbg!("Split internal node", left_keys = &node.keys[..node.num_keys], right_keys = &new_node.keys[..new_node.num_keys]);
+        // dbg!("Split internal node");
+        // dbg!(&node.keys[..node.num_keys], &new_node.keys[..new_node.num_keys]);
+
+        
+        // // Set parents of moved children
+        // for i in 0..=new_node.num_keys {
+        //     if !new_node.children[i].is_null() {
+        //         // let mut child_ptr = new_node.children[i];
+        //         // if rlu_try_lock(self.rlu, self.id, &mut child_ptr) {
+        //         //     (*child_ptr).parent = p_new_parent;
+        //         // }
+        //         if !self.link_nodes(new_parent_ptr, new_node.children[i], i) {
+        //             rlu_abort(self.rlu, self.id);
+        //             return (ptr::null_mut(), split_key);
+        //         }
+        //     }
+        // }
+
+        // println!("Splitting internal node with {:?} keys", &temp_keys);
+        // println!("Split key: {:?}", split_key);
+        // println!("Left node keys after split: {:?}", &node.keys[..node.num_keys]);
+        // println!("New node keys after split: {:?}", &(*p_new_parent).keys[..(*p_new_parent).num_keys]);
 
 
         // rlu_reader_unlock(self.rlu, self.id);
-        (new_parent_ptr, split_key)
+        // dbg!("new node in split_internal_node is", &*new_node_ptr);
+        (p_new_node, split_key)
     }
 
     pub fn range_search(&self, start_key: &K, end_key: &K) -> Vec<(K, V)> {
@@ -919,8 +1023,8 @@ impl<K: Ord + Clone + Copy + Debug + Unpin, V: Ord + Clone + Copy + Debug + Unpi
     
 }
 impl<K: Ord + Clone + Copy + Debug, V: Ord + Clone + Copy + Debug> BPlusTree<K, V> {
-    pub fn print_tree(&self) {
-        println!("\n=== B+ Tree Structure ===");
+    pub fn debug_print_tree(&self) {
+        println!("\n=== B+ Tree Structure with Detailed Pointer Analysis ===");
         println!("Order (B) = {}", B);
         
         unsafe {
@@ -932,20 +1036,21 @@ impl<K: Ord + Clone + Copy + Debug, V: Ord + Clone + Copy + Debug> BPlusTree<K, 
                 return;
             }
 
+            println!("Root address: 0x{:x}", root as usize);
+            
             let mut current_level = vec![root];
             let mut level_number = 0;
+            let mut all_nodes = Vec::new(); // Keep track of all valid node addresses
 
             while !current_level.is_empty() {
                 println!("\nLevel {}: ", level_number);
                 println!("{}", "=".repeat(80));
                 
                 let mut next_level = Vec::new();
-                let mut node_positions = Vec::new();
                 
-                // First pass: collect node positions
-                for (node_idx, node_ptr) in current_level.iter().enumerate() {
-                    let node = &**node_ptr;
-                    node_positions.push((*node_ptr) as usize);
+                for (node_idx, &node_ptr) in current_level.iter().enumerate() {
+                    let node = &*node_ptr;
+                    all_nodes.push(node_ptr as usize);
                     
                     print!("Node {}: [", node_idx);
                     for i in 0..node.num_keys {
@@ -956,49 +1061,33 @@ impl<K: Ord + Clone + Copy + Debug, V: Ord + Clone + Copy + Debug> BPlusTree<K, 
                             }
                         }
                     }
-                    print!("]");
+                    print!("] (addr: 0x{:x})", node_ptr as usize);
                     
                     if node.is_leaf {
                         print!("🍃");
-                        print!(" vals:[");
-                        for i in 0..node.num_keys {
-                            if let Some(val) = &node.values[i] {
-                                print!("{:?}", val);
-                                if i < node.num_keys - 1 {
-                                    print!(" | ");
-                                }
-                            }
+                        if !node.next_leaf.is_null() {
+                            print!(" next_leaf: 0x{:x}", node.next_leaf as usize);
                         }
-                        print!("]");
                     } else {
                         print!("🔵");
-                        // Collect children for next level
                         for i in 0..=node.num_keys {
-                            let child = node.children[i];
-                            if !child.is_null() {
-                                next_level.push(child);
+                            if !node.children[i].is_null() {
+                                next_level.push(node.children[i]);
+                                print!("\n    child[{}] addr: 0x{:x}", i, node.children[i] as usize);
                             }
                         }
                     }
                     
-                    // Print parent info with node address
                     if !node.parent.is_null() {
-                        let parent_addr = node.parent as usize;
-                        print!(" ↑(addr: 0x{:x})", parent_addr);
-                        if !node_positions.contains(&parent_addr) && level_number > 0 {
-                            print!(" WARNING: Invalid parent!");
+                        print!("\n    parent addr: 0x{:x}", node.parent as usize);
+                        if !all_nodes.contains(&(node.parent as usize)) {
+                            print!(" WARNING: Parent not found in previous levels!");
                         }
-                    } else if level_number > 0 {
-                        print!(" WARNING: Missing parent!");
-                    } else {
-                        print!(" (root addr: 0x{:x})", *node_ptr as usize);
                     }
-                    
                     println!();
                 }
                 
                 println!("{}", "-".repeat(80));
-                
                 current_level = next_level;
                 level_number += 1;
             }
@@ -1007,4 +1096,247 @@ impl<K: Ord + Clone + Copy + Debug, V: Ord + Clone + Copy + Debug> BPlusTree<K, 
         }
         println!("\n=== End of Tree ===\n");
     }
+
 }
+
+//  impl<K: Clone + Copy + Debug + Unpin + Ord, V: Clone + Copy + Debug + Unpin + Ord> BPlusTree<K, V> {
+//     pub fn remove(&mut self, key: &K) -> bool {
+//         unsafe {
+//             rlu_reader_lock(self.rlu, self.id);
+            
+
+//             // find the leaf contianing the key
+//             let mut leaf_ptr = self.find_leaf_for_key(key);
+//             if leaf_ptr.is_null() {
+//                 rlu_reader_lock(self.rlu, self.id);
+//                 return false;
+//             }
+
+//             if !rlu_try_lock(self.rlu, self.id, &mut leaf_ptr) {
+//                 rlu_abort(self.rlu, self.id);
+//                 return false;
+//             }
+
+//             let leaf = &mut *leaf_ptr;
+
+
+//             // find the key in the leaf to delete
+
+//             let key_pos = match leaf.keys[..leaf.num_keys]
+//                 .iter()
+//                 .position(|k| k.as_ref() == Some(key))    
+//             {
+//                 Some(pos) => pos,
+//                 None => {
+//                     rlu_reader_unlock(self.rlu, self.id);
+//                     return false;
+//                 }   
+//             };
+
+//             self.remove_from_leaf(leaf, key_pos);
+
+//             // Check if we need to handle underflow
+//             let min_keys = (B-1)/2;
+//             if leaf.num_keys >= min_keys && !leaf_ptr.eq(&self.root){
+            
+//                 self.handle_underflow(leaf_ptr)?;
+//             }
+
+//             rlu_reader_unlock(self.rlu, self.id);
+//             return true;
+//         }
+//     }
+
+//     unsafe fn remove_from_leaf(&self, leaf: &mut Node<K, V>, pos: usize) {
+//         // Shift remaining keys and values left
+//         for i in pos..leaf.num_keys-1 {
+//             leaf.keys[i] = leaf.keys[i+1].take();
+//             leaf.values[i] = leaf.values[i+1].take();
+//         }
+
+//         // Clear the last position
+//         leaf.keys[leaf.num_keys -1] = None;
+//         leaf.values[leaf.num_keys -1] = None;
+//         leaf.num_keys -= 1;
+
+//     }
+
+//     unsafe fn handle_underflow(&mut self, node_ptr: *mut Node<K, V>) -> bool {
+//         let node = &mut *node_ptr;
+//         let min_keys = (B-1)/2;
+
+//         // Get parent 
+//         let parent_ptr = node.parent;
+//         if parent_ptr.is_null() {
+//             // Root node, no underflow possible
+//             return true;
+//         }
+
+//         // Lock parent
+//         let mut p_parent = parent_ptr;
+//         if !rlu_try_lock(self.rlu, self.id, &mut p_parent) {
+//             rlu_abort(self.rlu, self.id);
+//             return false;
+//         }
+
+//         let parent = &mut *p_parent;
+
+//         // Find the current nodes position in the parent
+//         let node_pos = parent.children[..=parent.num_keys]
+//             .iter()
+//             .position(|child| child.eq(&node_ptr))
+//             .unwrap();
+
+//         // try borrowing from the left sibling
+//         if node_pos > 0 {
+//             let left_sibling_ptr = parent.children[node_pos -1];
+//             let mut p_left_sibling = left_sibling_ptr;
+
+//             if !rlu_try_lock(self.rlu, self.id, &mut p_left_sibling) {
+//                 rlu_abort(self.rlu, self.id);
+//                 return false;
+//             }
+
+//             let left_sibling = &mut *p_left_sibling;
+
+//             if left_sibling.num_keys > min_keys {
+//                 return self.redistribute_from_left(node_ptr, left_sibling, parent_ptr,  node_pos);
+
+//             }
+
+//         }
+//         // Try to borrow from right sibling
+//         if node_pos < parent.num_keys {
+//             let right_sibling_ptr = parent.children[node_pos + 1];
+//             let mut p_right_sibling = right_sibling_ptr;
+            
+//             if !rlu_try_lock(self.rlu, self.id, &mut p_right_sibling) {
+//                 rlu_abort(self.rlu, self.id);
+//                 return false;
+//             }
+
+//             let right_sibling = &mut *p_right_sibling;
+            
+//             if right_sibling.num_keys > min_keys {
+//                 return self.redistribute_from_right(node_ptr, right_sibling_ptr, parent_ptr, node_pos);
+//             }
+//         }
+
+//         // If we get here, we need to merge
+//         if node_pos > 0 {
+//             // Merge with left sibling
+//             let left_sibling_ptr = parent.children[node_pos -1];
+//             self.merge_nodes(left_sibling_ptr, node_ptr,  parent_ptr, node_pos -1)
+//         } else {
+//             let right_sibling_ptr = parent.children[node_pos +1];
+//             self.merge_nodes(node_ptr, right_sibling_ptr, parent_ptr, node_pos)
+//         }
+//     }   
+
+//     unsafe fn redistribute_from_left(
+//         &self, 
+//         node_ptr: *mut Node<K, V>,
+//         left_ptr: *mut Node<K, V>,
+//         parent_ptr: *mut Node<K, V>,
+//         node_pos: usize,
+//     ) -> bool {
+//         let node = &mut *node_ptr;
+//         let left = &mut *left_ptr;
+//         let parent = &mut *parent_ptr;
+
+//         // Make space in the target node
+//         for i in (0..node.num_keys).rev() {
+//             node.keys[i + 1] = node.keys[i].take();
+//             node.values[i + 1] = node.values[i].take();
+//         }
+
+//         // Move the last key/value from left sibling
+//         node.keys[0] = left.keys[left.num_keys - 1].take();
+//         node.values[0] = left.values[left.num_keys - 1].take();
+//         node.num_keys += 1;
+//         left.num_keys -= 1;
+
+//         // Update parent's separator key
+//         parent.keys[node_pos - 1] = Some(node.keys[0].unwrap().clone());
+        
+//         true
+//     }
+
+//     unsafe fn redistribute_from_right (
+//         &self,
+//         node_ptr: *mut Node<K, V>,
+//         right_ptr: *mut Node<K, V>,
+//         parent_ptr: *mut Node<K, V>,
+//         node_pos: usize,
+//     ) -> bool {
+//         let node = &mut *node_ptr;
+//         let right = &mut *right_ptr;
+//         let parent = &mut *parent_ptr;
+
+//         // Move first key/value from right sibling to end of current node
+//         node.keys[node.num_keys] = right.keys[0].take();
+//         node.values[node.num_keys] = right.values[0].take();
+//         node.num_keys += 1;
+
+//         // Shift remaining keys in right sibling left
+//         for i in 0..right.num_keys - 1 {
+//             right.keys[i] = right.keys[i + 1].take();
+//             right.values[i] = right.values[i + 1].take();
+//         }
+//         right.num_keys -= 1;
+
+//         // Update parent's separator key
+//         parent.keys[node_pos] = Some(right.keys[0].unwrap().clone());
+        
+//         true
+//     }
+
+//     unsafe fn merge_nodes(
+//         &mut self, 
+//         left_ptr: *mut Node<K, V>,
+//         right_ptr: *mut Node<K, V>,
+//         parent_ptr: *mut Node<K, V>,
+//         left_pos: usize,
+//     ) -> bool {
+//         let left = &mut *left_ptr;
+//         let right = &mut *right_ptr;
+//         let parent = &mut *parent_ptr;
+
+//         // copy all keys and values from right to left
+//         for i in 0..right.num_keys {
+//             left.keys[left.num_keys + i] = right.keys[i].take();
+//             left.values[left.num_keys + i] = right.values[i].take();
+//         }
+
+//         left.num_keys += right.num_keys;
+
+//         // Update leaf pointers if these are leaf nodes
+//         if left.is_leaf {
+//             left.next_leaf = right.next_leaf;
+//         }
+
+//         // remove the separator key from parent and adjust child pointers
+//         for i in left_pos + 1..parent.num_keys {
+//             parent.keys[i - 1] = parent.keys[i].take();
+//             parent.children[i] = parent.children[i + 1];
+//         }
+//         parent.num_keys -= 1;
+//         parent.children[parent.num_keys + 1] = ptr::null_mut();
+
+//         // Handle parent underflow if needed
+//         if parent.num_keys < (B - 1) / 2 {
+//             if parent_ptr == self.root {
+//                 if parent.num_keys == 0 {
+//                     // Root is empty, make left child the new root
+//                     self.root = left_ptr;
+//                     (*left_ptr).parent = ptr::null_mut();
+//                 }
+//             } else {
+//                 self.handle_underflow(parent_ptr)?;
+//             }
+//         }
+
+//         true
+
+//     }
+// }
