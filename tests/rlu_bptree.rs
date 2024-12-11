@@ -62,7 +62,9 @@ mod tests {
         bptree.insert(70, 'n');
         assert_eq!(bptree.search(&70), Some('n'));
         bptree.insert(71, 'o');
-        // assert_eq!(bptree.search(&71), Some('o'));
+        assert_eq!(bptree.search(&71), Some('o'));
+        // bptree.insert(72, 'p');
+        // assert_eq!(bptree.search(&72), Some('p'));
 
         bptree.debug_print_tree();
         // Vec::new(bptree.range_search(&5, &60));
