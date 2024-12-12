@@ -1,9 +1,9 @@
-package java;
+package javasrc.Rlu;
 
 import java.util.concurrent.atomic.AtomicReference;
 
 public class RluObjectHeader<T extends RluObject>
 {
-    public AtomicReference<T> ptrCopyObj;
+    public AtomicReference<Object> ptrCopyObj;
     public WriteSetHeader<T> writeSetHeader;
 }

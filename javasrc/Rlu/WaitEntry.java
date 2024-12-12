@@ -1,4 +1,4 @@
-package java;
+package javasrc.Rlu;
 
 public class WaitEntry 
 {
