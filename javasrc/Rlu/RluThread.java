@@ -1,4 +1,4 @@
-package java;
+package javasrc.Rlu;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -21,6 +21,8 @@ public class RluThread extends Thread
     public RluObject[] writeLog;
     public int currPos = 0;
     public int numObjs = 0;
+
+    protected long totalTimeNano;
 
     public RluThread()
     {
@@ -63,5 +65,22 @@ public class RluThread extends Thread
         {
             freeNodes[i] = null;
         }
+    }
+
+    public void print(Object obj)
+    {
+        if (obj == null)
+        {
+            System.out.println("Null");
+        }
+        else 
+        {
+            System.out.println(obj.toString());
+        }
+    }
+
+    public long getTotalTimeNano() 
+    {
+        return totalTimeNano;
     }
 }

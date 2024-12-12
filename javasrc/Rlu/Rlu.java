@@ -1,8 +1,8 @@
-package java;
+package javasrc.Rlu;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class Rlu 
+public class Rlu
 {
     private static AtomicInteger globalClock;
     private static AtomicInteger numThreads;
@@ -79,7 +79,7 @@ public class Rlu
         if (ptrCopy == null) return object;
         
         // This object is a copy and has already been referenced
-        if (ptrCopy == RluObject.COPYID) return object;
+        if (object.isCopy()) return object;
 
         // Get locking thread id
         int lockingThreadId = ptrCopy.getLockingThreadIdFromWriteSet();
@@ -154,9 +154,11 @@ public class Rlu
         // Object is unlocked
         RluObject copy = object.getCopyWithWriteSetHeader(thread.runCounter.get(), thread.getThreadId());
         thread.writeLog[thread.currPos] = copy;
-
-        if (!object.cas(copy)) return null;
-
+        
+        if (!object.cas(copy)) 
+        {
+            return null;
+        }
         // Update write set header
         thread.currPos++;
         thread.numObjs++;
@@ -308,5 +310,12 @@ public class Rlu
     private static RluThread currentThread()
     {
         return (RluThread)Thread.currentThread();
+    }
+
+    @SuppressWarnings("unused")
+    private static void print(Object o)
+    {
+        if (o == null) System.out.println("Null");
+        else System.out.println(o.toString());
     }
 }

@@ -1,0 +1,6 @@
+#!/bin/bash
+
+clear 
+
+javac -d bin javasrc/Rlu/*.java javasrc/tests/*.java
+java -cp bin javasrc.tests.Bench "$@"
