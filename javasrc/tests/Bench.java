@@ -1,5 +1,7 @@
 package javasrc.tests;
 
+import java.io.BufferedWriter;
+import java.io.FileWriter;
 import java.util.Arrays;
 
 import javasrc.Rlu.Rlu;
@@ -35,7 +37,7 @@ public class Bench
     private static void runBenchmark(int numThreads, String test, double percentWrite, int iterations)
     {
         print("=====================");
-        print("Test: " + test + "\nThread count: " + numThreads);
+        print("Thread count: " + numThreads + "\nWrite Percent: " + percentWrite);
         print("=====================\n");
 
         RluList list = new RluList();
@@ -50,12 +52,38 @@ public class Bench
         });
         long endTime = System.nanoTime();
 
-        if (test.equals(LIST)) list.printList();
         double totalIterations = numThreads * iterations;
         double totalTime = (double)(endTime - startTime) / 1000000000;
-        print("Total operations: " + (long)totalIterations);
-        print("Total time: " + totalTime + "s");
-        print("Throughput = " + totalIterations / totalTime);
+    
+        String filename = "logfile.csv";
+        String[] header = {"Thread Count", "Write Percent", "Throughput"};
+        String[][] data = 
+        {
+            {
+                String.valueOf(numThreads), String.valueOf(percentWrite), String.valueOf((long)(totalIterations / totalTime))
+            }
+        };
+
+        try (BufferedWriter writer = new BufferedWriter(new FileWriter(filename, true)))
+        {
+            if (new java.io.File(filename).length() == 0)
+            {
+                writer.write(String.join(",", header));
+                writer.newLine();
+            }
+
+            for (String[] row: data)
+            {
+                writer.write(String.join(",", row));
+                writer.newLine();
+            }
+
+            print("Statistics finished logging");
+        }   
+        catch (Exception e) 
+        {
+            e.printStackTrace();
+        }
     }
 
     private static RluThread[] getTestThreads(int num, String test, RluList list, double writePercent, int iterations)

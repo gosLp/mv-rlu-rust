@@ -1,0 +1,2 @@
+#!/bin/bash
+javac -d bin javasrc/Rlu/*.java javasrc/tests/*.java

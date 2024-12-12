@@ -1,6 +1,22 @@
 #!/bin/bash
+set -e
 
-clear 
+./build 
 
-javac -d bin javasrc/Rlu/*.java javasrc/tests/*.java
-java -cp bin javasrc.tests.Bench "$@"
+threads=(2 4 8 16 20 30 40)
+write_percent=(0 0.02 0.05 0.1 0.2 0.3 0.4)
+
+cleanup() {
+  echo "Script interrupted. Killing all child processes."
+  kill 0
+}
+
+trap cleanup SIGINT
+
+for t in "${threads[@]}"; do
+    for wp in "${write_percent[@]}"; do
+        java -cp bin javasrc.tests.Bench "$t" list "$wp"
+    done
+done
+
+wait
