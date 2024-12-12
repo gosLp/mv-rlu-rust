@@ -1,6 +1,7 @@
 package javasrc.tests;
 
-import java.lang.Math;
+import java.util.Random;
+
 import javasrc.Rlu.RluList;
 import javasrc.Rlu.RluThread;
 
@@ -19,17 +20,18 @@ public class ListThread extends RluThread
     @Override 
     public void run()
     {
+        Random random = new Random();
+        
         long startTime = System.nanoTime();
-
         for (int i = 0; i < iterations; i++)
         {
-            double value = Math.random() * 100;
+            double value = random.nextDouble() * 100;
             int key = (int)value;
+            double op = random.nextDouble();
             
-            double op = Math.random();
             if (op <= writePercent)
             {
-                double op2 = Math.random();
+                double op2 = random.nextDouble();
                 if (op2 < 0.5)
                 {
                     list.remove(key);
@@ -44,8 +46,7 @@ public class ListThread extends RluThread
                 list.contains(key);
             }
         }
-
         long endTime = System.nanoTime();
-        totalTimeNano = endTime - startTime;
+        setTotalTime(endTime - startTime);
     }    
 }
