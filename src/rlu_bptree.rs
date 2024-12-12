@@ -781,6 +781,9 @@ impl<K: Ord + Clone + Copy + Debug + Unpin, V: Ord + Clone + Copy + Debug + Unpi
         println!("Inserting key {:?} into parent. Parent keys before: {:?}", key, &parent_node.keys[..parent_node.num_keys]);
         dbg!("Inserting key into parent. Parent keys before:", &parent_node.keys[..parent_node.num_keys]);
 
+        let original_key = key;
+        let original_right = right;
+
         // // Insert the key into the parent, keeping keys sorted:
         // let pos = parent_node.keys.iter()
         //     .take(parent_node.num_keys)
@@ -809,15 +812,77 @@ impl<K: Ord + Clone + Copy + Debug + Unpin, V: Ord + Clone + Copy + Debug + Unpi
         
         // Parent is full, need to split
         // Parent needs splitting
-        let (new_parent_ptr, parent_split_key) = self.split_internal_node(parent_node);
-        dbg!("new_parent , left node and parent_split_key are", &*new_parent_ptr, &*parent_node, &parent_split_key);
-        if new_parent_ptr.is_null() {
-            // self.insert_into_parent(p_parent, new_parent_ptr, parent_split_key);
+        // let (new_parent_ptr, parent_split_key) = self.split_internal_node(parent_node);
+        // dbg!("new_parent , left node and parent_split_key are", &*new_parent_ptr, &*parent_node, &parent_split_key);
+        // if new_parent_ptr.is_null() {
+        //     // self.insert_into_parent(p_parent, new_parent_ptr, parent_split_key);
+        //     return false;
+        // }
+
+
+        // self.insert_into_parent(p_parent, new_parent_ptr, parent_split_key)
+
+
+        // Parent is full, need to split
+        let (p_new_parent, parent_split_key) = self.split_internal_node(parent_node);
+        if p_new_parent.is_null() {
             return false;
         }
 
+        // Now attach our original 'right' node to the appropriate parent
+        if key >= parent_split_key {
+            // Should be a child of the new right parent
+            let new_parent = &mut *p_new_parent;
+            // Find position in new parent
+            let pos = new_parent.keys[..new_parent.num_keys]
+                .iter()
+                .position(|k_opt| k_opt.as_ref().map_or(true, |k| k > &key))
+                .unwrap_or(new_parent.num_keys);
+            
+            // Shift keys and children
+            for i in (pos..new_parent.num_keys).rev() {
+                new_parent.keys[i + 1] = new_parent.keys[i].take();
+                new_parent.children[i + 2] = new_parent.children[i + 1];
+            }
+            
+            // Insert the key and right node
+            new_parent.keys[pos] = Some(key);
+            new_parent.children[pos + 1] = right;
+            new_parent.num_keys += 1;
+            (*right).parent = p_new_parent;
+        } else {
+            // Should be a child of the original parent
+            // Find position in original parent
+            let pos = parent_node.keys[..parent_node.num_keys]
+                .iter()
+                .position(|k_opt| k_opt.as_ref().map_or(true, |k| k > &key))
+                .unwrap_or(parent_node.num_keys);
+            
+            // Shift keys and children
+            for i in (pos..parent_node.num_keys).rev() {
+                parent_node.keys[i + 1] = parent_node.keys[i].take();
+                parent_node.children[i + 2] = parent_node.children[i + 1];
+            }
+            
+            // Insert the key and right node
+            parent_node.keys[pos] = Some(key);
+            parent_node.children[pos + 1] = right;
+            parent_node.num_keys += 1;
+            (*right).parent = p_parent;
+        }
 
-        self.insert_into_parent(p_parent, new_parent_ptr, parent_split_key)
+        // Now we can do the recursive call to handle the split
+        self.insert_into_parent(p_parent, p_new_parent, parent_split_key)
+        // // If we're at the top level of recursion, we need to re-dereference the root
+        // // to get the most up-to-date pointer
+        // if !parent_ptr.is_null() {
+        //     let current_root = rlu_dereference(self.rlu, self.id, self.root);
+        //     if !current_root.is_null() {
+        //         self.root = current_root;
+        //     }
+        // }
+
+        // recursive_result
 
     }
 
@@ -902,6 +967,7 @@ impl<K: Ord + Clone + Copy + Debug + Unpin, V: Ord + Clone + Copy + Debug + Unpi
             }
         }
 
+        new_node.parent = node.parent;
         dbg!(" right node after split", &new_node.keys[..new_node.num_keys], &new_node.children[..new_node.num_keys+1]);
 
 
