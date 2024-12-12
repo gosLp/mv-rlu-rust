@@ -1,28 +1,74 @@
-# MV-RLU in Rust
+# RLU B+ Tree in Rust
 
-### Overview
+## Overview
+This project implements a concurrent B+ tree data structure using the Read-Log-Update (RLU) concurrency mechanism in Rust. It builds upon the RLU implementation by [hudson-ayers/rlu-rust](https://github.com/hudson-ayers/rlu-rust), extending it to support B+ tree operations.
 
-This is a project repo that is using the rlu implementation by hudson-ayers/rlu-rust
-we are implementing a B+tree using an optimisation on rlu called mv-rlu in rust
+The B+ tree implementation offers:
+- Concurrent search operations
+- Thread-safe insertions
+- Range query support
+- Multiple reader threads with RLU synchronization
 
-This is a userspace implementation of the Read-Log-Update concurrency mechanism ([SOSP '15](https://dl.acm.org/citation.cfm?id=2815406)), written in Rust. This implementation
-is for the most part a direct port of the C code to Rust, with a few exceptions, and as a result uses lots
-of unsafe and raw pointer manipulations, and is not particularly "rusty".
+## Getting Started
 
-### Comparison to Original Implementation
+### Prerequisites
+- Rust and Cargo (latest stable version)
+- Git
 
-One advantage of this implementation over the original [C implementation](https://github.com/rlu-sync/rlu) is that it does not rely on any global state, so multiple RLU instances can exist simultaneously in a single process.
+### Installation
+```bash
+git clone https://github.com/gosLp/mv-rlu-rust.git
+cd [repo-name]
+cargo build
+```
 
-One disadvantage of this implementation vs. the original is that any data type wishing to use it must be placed
-in a wrapper struct that contains the RLU header and implements the `RluObj` trait. This requires some small overhead each time a new data type is used with the mechanism. The advantage of this approach is that it removes
-the need for custom allocation and freeing of headers placed in memory ahead of whatever data type is being used.
+## Running Tests
 
-When evaluated using a linked-list based set, with workloads ranging from 2% writes to 40% writes and up to 8 simultaneous read/write threads, this implementation acheives on average 90% of the throughput of the original C implementation, and significantly outperforms lock based use of sets in the Rust standard library such as BTreeSet.
+To verify the implementation is working correctly:
+```bash
+cargo test
+```
 
-### Other information
+### Benchmarks
+The project includes several benchmarks to compare performance between different B+ tree implementations:
 
-This project was implemented as a final project for Stanford's Programming Languages course (CS 242), taught by Will Crichton, and the benchmarking code and set testing code were written by him.
+RLU B+ Tree (our implementation)
+Sequential B+ Tree
+Rust's built-in BTreeMap
 
-Disclaimer: It is very possible there exist race conditions or memory safety bugs in this code which my tests do not catch. As a result, it is definitely possible that functions not marked unsafe could actually lead to
-memory errors. This code should not be used in production under any assumption that it upholds all of Rust's
-guarantees with respect to memory safety / correctness.
+### Running Benchmarks
+
+1. Normal Search Benchmark:
+
+```bash
+cargo run --bin bench_bp
+```
+This will run search operations with varying thread counts (1-4) and operation counts (10K, 100K, 1M).
+
+2. Range Query Benchmark:
+
+```bash
+cargo run --bin range_bench
+```
+This benchmark compares range query performance across implementations.
+Uses RLU (Read-Log-Update) for concurrency control
+Order-8 B+ tree implementation
+Supports concurrent reads with write operations
+Maintains tree balance during insertions
+
+
+### Performance
+Our implementation shows significant performance improvements with multiple threads:
+
+1. Up to 4x speedup with 4 threads for search operations
+2. Competitive performance against Rust's built-in BTreeMap
+3. Efficient range query support
+
+### Credits
+
+Original RLU implementation by hudson-ayers/rlu-rust
+Based on the Read-Log-Update concurrency mechanism (SOSP '15)
+
+## Note
+This is a research implementation and may contain memory safety issues not caught by the test suite. It should not be used in production environments without thorough validation.
+
