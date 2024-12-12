@@ -1,0 +1,104 @@
+type,threads,time_ms
+btreemap,1,690
+sequential,1,570.6
+rlu,1,479.6
+rlu,2,237.8
+rlu,3,162.2
+rlu,4,129.2
+type,threads,time_ms
+btreemap,1,68.6
+sequential,1,56.2
+rlu,1,47.6
+rlu,2,23.8
+rlu,3,16
+rlu,4,12.4
+type,threads,time_ms
+btreemap,1,6.6
+sequential,1,5
+rlu,1,4.4
+rlu,2,2
+rlu,3,1.2
+rlu,4,1.2
+
+range searches:
+type,threads,time_ms
+btreemap,1,679.6
+sequential,1,556.4
+rlu,1,468
+rlu,2,236.2
+rlu,3,188.2
+rlu,4,123.6
+type,threads,time_ms
+btreemap,1,67.2
+sequential,1,55.8
+rlu,1,46.8
+rlu,2,23.4
+rlu,3,16.8
+rlu,4,13
+type,threads,time_ms
+btreemap,1,6.4
+sequential,1,5
+rlu,1,4.2
+rlu,2,2
+rlu,3,1.2
+rlu,4,1
+
+
+
+normal searches
+number of searches: 1000000
+type,threads,time_ms
+btreemap,1,297.2
+sequential,1,273.4
+rlu,1,283
+rlu,2,134.2
+rlu,3,89
+rlu,4,73.8
+
+number of searches: 100000
+type,threads,time_ms
+btreemap,1,28.4
+sequential,1,25.8
+rlu,1,28.6
+rlu,2,13.2
+rlu,3,10
+rlu,4,8
+
+number of searches: 10000
+type,threads,time_ms
+btreemap,1,2.6
+sequential,1,2
+rlu,1,2.2
+rlu,2,1
+rlu,3,1
+rlu,4,0.2
+
+
+
+normal search
+number of searches: 1000000
+type,threads,time_ms
+btreemap,1,282.6
+sequential,1,245.6
+rlu,1,260.2
+rlu,2,133
+rlu,3,136.6
+rlu,4,79.4
+
+number of searches: 100000
+type,threads,time_ms
+btreemap,1,27.8
+sequential,1,24.4
+rlu,1,26.2
+rlu,2,13.2
+rlu,3,9
+rlu,4,7.4
+
+number of searches: 10000
+type,threads,time_ms
+btreemap,1,2.6
+sequential,1,2
+rlu,1,2
+rlu,2,1
+rlu,3,1
+rlu,4,0.4

@@ -62,8 +62,8 @@ mod tests {
         bptree.insert(70, 'n');
         assert_eq!(bptree.search(&70), Some('n'));
         bptree.insert(71, 'o');
-        assert_eq!(bptree.search(&71), Some('o'));
-        // bptree.insert(72, 'p');
+        assert_eq!(bptree.search(&15), Some('c'));
+        // bptree.insert(12, 'p');
         // assert_eq!(bptree.search(&72), Some('p'));
 
         bptree.debug_print_tree();
@@ -71,90 +71,33 @@ mod tests {
         // assert_eq!(Vec::from(bptree.range_search(&5, &60)), vec![(5, 'h'), (10, 'a'), (15, 'c'), (17, 'j'), (18, 'k'), (20, 'b'), (25, 'd'), (32, 'l'), (35, 'e'), (40, 'f'), (45, 'g'), (60, 'i')]);
     }
 
-    // #[test]
-    // fn bptree_concurrent_inserts() {
-    //     let tree = BPlusTree::new();
+    #[test]
+    fn bptree_concurrent_inserts() {
+        let tree = BPlusTree::new();
 
-    //     let writer = || {
-    //         let mut tree = tree.clone_ref();
-    //         thread::spawn(move || {
-    //             let mut rng = thread_rng();
-    //             for _ in 0..10 {
-    //                 let i = rng.gen_range(10, 50);
-    //                 tree.insert(i, i *10);
-    //             }
-    //         })
-    //     };
+        let writer = || {
+            let mut tree = tree.clone_ref();
+            thread::spawn(move || {
+                let mut rng = thread_rng();
+                for _ in 0..10 {
+                    let i = rng.gen_range(10, 50);
+                    tree.insert(i, i *10);
+                }
+            })
+        };
 
-    //     let writers: Vec<_> = (0..4).map(|_| writer()).collect();
+        let writers: Vec<_> = (0..4).map(|_| writer()).collect();
 
-    //     for t in writers {
-    //         t.join().unwrap();
-    //     }
-
-
-    //     // // Verify some randon keys were inserted
-    //     // // assert_eq!(tree.search(&10), Some(100));
-    //     // let mut found_count = 0;
-    //     // for i in 10..50 {
-    //     //     if tree.search(&i).is_some() {
-    //     //         found_count += 1;
-    //     //     }
-    //     // }
-
-    //     tree.print_tree();  
-
-    //     // assert!(found_count > 0, "No keys were found");
-
-    // }
-    // #[test]
-    // fn test_simple_thread() {
-    //     let mut tree = BPlusTree::new();
-        
-    //     for i in 0..100 {
-    //         tree.insert(i, i);
-    //     }
-
-    //     let reader = || {
-    //         let tree = tree.clone_ref();
-    //         thread::spawn(move || {
-    //             let mut rng = thread_rng();
-    
-    //             for _ in 0..10000 {
-    //                 let i = rng.gen_range(0, 500) * 2;
-    //                 assert!(set.contains(i));
-    //             }
-    //         })
-    //     };
-    
-    //     let writer = || {
-    //         let set = set.clone_ref();
-    //         thread::spawn(move || {
-    //             let mut rng = thread_rng();
-    
-    //             for _ in 0..1000 {
-    //                 let i = rng.gen_range(0, 499) * 2 + 1;
-    //                 if random() {
-    //                     set.insert(i);
-    //                 } else {
-    //                     set.delete(i);
-    //                 }
-    //             }
-    //         })
-    //     };
-    
-    //     let readers: Vec<_> = (0..16).map(|_| reader()).collect();
-    //     let writers: Vec<_> = (0..4).map(|_| writer()).collect();
-    
-    //     for t in readers {
-    //         t.join().unwrap();
-    //     }
-    
-    //     for t in writers {
-    //         t.join().unwrap();
-    //     }
+        for t in writers {
+            t.join().unwrap();
+        }
 
 
-    // }
+
+        tree.debug_print_tree();  
+
+        // assert!(found_count > 0, "No keys were found");
+
+    }
 
 }

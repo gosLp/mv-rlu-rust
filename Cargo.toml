@@ -7,3 +7,12 @@ edition = "2018"
 [dependencies]
 rand = "0.6.5"
 clap = "2.33.0"
+prettytable = "0.10"
+
+[[bin]]
+name = "bench_bp"
+path = "src/bin/bench_bp.rs"
+
+[[bin]]
+name = "range_bench"
+path = "src/bin/range_bench.rs"

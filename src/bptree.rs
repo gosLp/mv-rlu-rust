@@ -23,7 +23,7 @@ pub struct BPTree<K, V> {
 }
 
 
-impl<K: Ord + Clone , V: Clone > BPTree<K, V> {
+impl<K: Ord + Clone + fmt::Debug + Ord , V: Clone + fmt::Debug + Ord > BPTree<K, V> {
     pub fn new() -> Self {
         Self {
             root: Box::new(BPTreeNode::LeafNode 
@@ -39,29 +39,48 @@ impl<K: Ord + Clone , V: Clone > BPTree<K, V> {
         matches!(*self.root, BPTreeNode::LeafNode { .. })
     }
 
+    // pub fn insert(&mut self, key: K, value: V) {
+    //     let root = self.root.as_mut();
+    //     match root {
+    //         BPTreeNode::LeafNode { keys, values, next: _ } => {
+    //             // find position to insert the key
+    //             let pos = keys.binary_search(&key).unwrap_or_else(|e| e);
+
+    //             // inset key and value at the same position
+    //             keys.insert(pos, key);
+    //             values.insert(pos, value);
+
+    //             // if overflow 
+    //             if keys.len() > ORDER {
+    //                 self.split_root();
+    //             }
+
+    //         },
+    //         _ => {
+    //             // handles internal node, we will implement this later
+    //             panic!("Insertion into internal nodes not implemented yet");
+    //         }
+    //     }
+
+    // }
+    
     pub fn insert(&mut self, key: K, value: V) {
-        let root = self.root.as_mut();
-        match root {
-            BPTreeNode::LeafNode { keys, values, next: _ } => {
-                // find position to insert the key
-                let pos = keys.binary_search(&key).unwrap_or_else(|e| e);
-
-                // inset key and value at the same position
-                keys.insert(pos, key);
-                values.insert(pos, value);
-
-                // if overflow 
-                if keys.len() > ORDER {
-                    self.split_root();
-                }
-
-            },
-            _ => {
-                // handles internal node, we will implement this later
-                panic!("Insertion into internal nodes not implemented yet");
-            }
+        if let Some((promoted_key, new_node)) = self.root.insert_internal(key, value) {
+            // First store the old root
+            let old_root = std::mem::replace(
+                &mut self.root,
+                Box::new(BPTreeNode::LeafNode { 
+                    keys: Vec::new(),
+                    values: Vec::new(),
+                    next: None,
+                })
+            );
+            // Then create new root with the old root and new node as children
+            self.root = Box::new(BPTreeNode::InternalNode {
+                keys: vec![promoted_key],
+                children: vec![old_root, new_node],
+            });
         }
-
     }
 
     pub fn split_root(&mut self){
@@ -146,6 +165,11 @@ impl<K: Ord + Clone , V: Clone > BPTree<K, V> {
 
         result
     }
+    pub fn copy_ref(&self) -> Self {
+        Self {
+            root: self.root.clone()
+        }
+    }
 
 }
 
@@ -164,137 +188,75 @@ impl <K: fmt::Debug, V: fmt::Debug> fmt::Debug for BPTreeNode<K, V> {
             ),
         }
     }
+    
 }
-
-// impl<K: Ord + Clone, V: Clone> BPTree<K, V> {
-//     pub fn delete(&mut self, key: &K) {
-//         // First, find the path to the key
-//         let deletion_path = self.find_deletion_path(key);
-        
-//         match deletion_path {
-//             Some(mut path) => {
-//                 // Perform the actual deletion
-//                 self.perform_deletion(&mut path, key);
-                
-//                 // Rebalance the tree if necessary
-//                 self.rebalance_after_deletion(&mut path);
-//             }
-//             None => {} // Key not found, do nothing
-//         }
-//     }
-
-//     // Find the path to the key without mutating
-//     fn find_deletion_path(&self, key: &K) -> Option<Vec<NodeRef<K, V>>> {
-//         let mut path = Vec::new();
-//         let mut current = &self.root;
-        
-//         loop {
-//             match current.as_ref() {
-//                 BPTreeNode::InternalNode { keys, children, .. } => {
-//                     // Find the appropriate child to descend into
-//                     let child_idx = keys.iter().position(|k| key < k).unwrap_or(keys.len());
-                    
-//                     // Add current node to path
-//                     path.push(NodeRef {
-//                         node: current,
-//                         child_index: child_idx,
-//                     });
-                    
-//                     // Move to the next child
-//                     current = &children[child_idx];
-//                 }
-//                 BPTreeNode::LeafNode { keys, .. } => {
-//                     // Check if key exists in leaf
-//                     if keys.binary_search(key).is_ok() {
-//                         path.push(NodeRef {
-//                             node: current,
-//                             child_index: keys.binary_search(key).unwrap(),
-//                         });
-//                         return Some(path);
-//                     }
-//                     return None;
-//                 }
-//             }
-//         }
-//     }
-
-//     // Perform the actual deletion
-//     fn perform_deletion(&mut self, path: &mut Vec<NodeRef<K, V>>, key: &K) {
-//         // Get the last node (leaf node)
-//         let leaf_ref = path.last_mut().unwrap();
-        
-//         match leaf_ref.node.as_mut() {
-//             BPTreeNode::LeafNode { keys, values, .. } => {
-//                 let idx = leaf_ref.child_index;
-//                 keys.remove(idx);
-//                 values.remove(idx);
-//             }
-//             _ => unreachable!()
-//         }
-//     }
-
-//     // Rebalance the tree after deletion
-//     fn rebalance_after_deletion(&mut self, path: &mut Vec<NodeRef<K, V>>) {
-//         // Start from the leaf and move up
-//         for i in (0..path.len()).rev() {
-//             let node_ref = &mut path[i];
-            
-//             match node_ref.node.as_mut() {
-//                 BPTreeNode::LeafNode { keys, .. } => {
-//                     if keys.len() < ORDER / 2 {
-//                         // Attempt to borrow from sibling or merge
-//                         self.redistribute_or_merge(path, i);
-//                     }
-//                 }
-//                 BPTreeNode::InternalNode { keys, children, .. } => {
-//                     if keys.len() < ORDER / 2 {
-//                         // Redistribute or merge internal nodes
-//                         self.redistribute_or_merge(path, i);
-//                     }
-//                 }
-//             }
-//         }
-
-//         // Handle root special case
-//         if let BPTreeNode::InternalNode { keys, children, .. } = &*self.root {
-//             if keys.is_empty() && !children.is_empty() {
-//                 self.root = children[0].clone();
-//             }
-//         }
-//     }
-
-//     // Redistribute keys or merge nodes
-//     fn redistribute_or_merge(&mut self, path: &mut Vec<NodeRef<K, V>>, index: usize) {
-//         // Placeholder for more complex redistribution logic
-//         // This is a simplified version and would need more robust implementation
-//         if index > 0 {
-//             // Try to borrow from left sibling
-//             // Implement redistribution logic here
-//         }
-        
-//         if index < path.len() - 1 {
-//             // Try to borrow from right sibling
-//             // Implement redistribution logic here
-//         }
-//     }
-// }
-
-// // Helper struct to track node references during traversal
-// struct NodeRef<'a, K, V> {
-//     node: &'a Box<BPTreeNode<K, V>>,
-//     child_index: usize,
-// }
-
-// // Marker for deletion result
-// enum DeletionResult {
-//     Normal,
-//     Underflow,
-// }
-
 
 
 impl <K: fmt::Debug, V: fmt::Debug> fmt::Debug for BPTree<K, V> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "BPlusTree {{ root: {:?} }}", self.root)
     }
+}
+
+impl <K:fmt::Debug + Ord + Clone, V: fmt::Debug + Ord + Clone> BPTreeNode<K, V> {
+    // In BPTreeNode<K,V> enum impl block:
+fn insert_internal(&mut self, key: K, value: V) -> Option<(K, Box<BPTreeNode<K,V>>)> {
+    match self {
+        BPTreeNode::InternalNode { keys, children } => {
+            // Find the correct child to insert into
+            let idx = keys.iter().position(|k| key < *k).unwrap_or(keys.len());
+            
+            // Recursively insert into child
+            if let Some((promoted_key, new_node)) = children[idx].insert_internal(key, value) {
+                // Handle the promoted key
+                keys.insert(idx, promoted_key);
+                children.insert(idx + 1, new_node);
+                
+                // Check if we need to split this node
+                if keys.len() > ORDER {
+                    // Split this internal node
+                    let mid = keys.len() / 2;
+                    let promoted = keys[mid].clone();
+                    
+                    let new_keys = keys.split_off(mid + 1);
+                    let new_children = children.split_off(mid + 1);
+                    
+                    let new_node = Box::new(BPTreeNode::InternalNode {
+                        keys: new_keys,
+                        children: new_children,
+                    });
+                    
+                    keys.pop(); // Remove the promoted key
+                    return Some((promoted, new_node));
+                }
+            }
+            None
+        },
+        BPTreeNode::LeafNode { keys, values, next } => {
+            // Your existing leaf node insert logic
+            let pos = keys.binary_search(&key).unwrap_or_else(|e| e);
+            keys.insert(pos, key);
+            values.insert(pos, value);
+            
+            if keys.len() > ORDER {
+                // Split leaf node
+                let mid = keys.len() / 2;
+                let new_keys = keys.split_off(mid);
+                let new_values = values.split_off(mid);
+                let return_key = new_keys[0].clone();
+                
+                let new_node = Box::new(BPTreeNode::LeafNode {
+                    keys: new_keys,
+                    values: new_values,
+                    next: next.take(),
+                });
+                
+                *next = Some(new_node.clone());
+                
+                return Some((return_key, new_node));
+            }
+            None
+        }
+    }
+}
 }

@@ -17,9 +17,9 @@ pub struct WsHdr<T: RluObj> {
 }
 
 pub struct ObjList<T: RluObj> {
-    num_of_objs: usize,
-    cur_pos: usize,
-    buffer: [Option<T>; RLU_MAX_LOG_SIZE],
+    pub num_of_objs: usize,
+    pub cur_pos: usize,
+    pub buffer: [Option<T>; RLU_MAX_LOG_SIZE],
 }
 
 impl<T> ObjList<T>
@@ -54,7 +54,7 @@ pub struct WaitEntry {
 
 pub struct RluThread<T: RluObj> {
     is_writer: bool,
-    wlog: ObjList<T>,
+    pub wlog: ObjList<T>,
     run_counter: AtomicU64, //odd = active, even = inactive
     local_clock: AtomicU64,
     write_clock: AtomicU64,
@@ -113,7 +113,7 @@ pub struct RluObjHdr<T: RluObj> {
 
 // This struct makes it possible to have multiple concurrent RLU data structures
 pub struct GlobalRlu<T: RluObj> {
-    threads: [Option<Box<RluThread<T>>>; RLU_MAX_THREADS],
+    pub threads: [Option<Box<RluThread<T>>>; RLU_MAX_THREADS],
     global_clock: AtomicU64,
     num_threads_created: AtomicUsize,
 }
