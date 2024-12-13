@@ -18,7 +18,7 @@ The B+ tree implementation offers:
 ### Installation
 ```bash
 git clone https://github.com/gosLp/mv-rlu-rust.git
-cd [repo-name]
+cd mv-rlu-rust
 cargo build
 ```
 
