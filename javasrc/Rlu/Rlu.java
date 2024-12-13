@@ -47,67 +47,96 @@ public class Rlu
 
     public static void readerLock()
     {
-        RluThread thread = currentThread();
-        assert (thread.runCounter.get() & 0x1) != 0 : "Thread's run counter was odd on readerLock, indicating that it was already in the critical section";
-
-        thread.runCounter.getAndIncrement();
-        thread.isWriter = false;
-        thread.localClock.set(globalClock.get()); 
+        long startTime = System.nanoTime();
+        try
+        {
+            RluThread thread = currentThread();
+            assert (thread.runCounter & 0x1) != 0 : "Thread's run counter was odd on readerLock, indicating that it was already in the critical section";
+    
+            thread.runCounter++;
+            thread.isWriter = false;
+            thread.localClock = globalClock.get();
+        } 
+        finally
+        {
+            long endTime = System.nanoTime();
+            currentThread().addRluNanoTime(endTime - startTime);
+        }   
     }
 
     public static void readerUnlock()
     {
-        RluThread thread = currentThread();
-        assert (thread.runCounter.get() & 0x1) != 0 : "Thread's run counter was even on readerUnlock, indicating that it was not in the critical section";
+        long startTime = System.nanoTime();
 
-        thread.runCounter.getAndIncrement();
-        if (thread.isWriter)
+        try
         {
-            thread.isWriter = false;
-            commitWriteLog();
+            RluThread thread = currentThread();
+            assert (thread.runCounter & 0x1) != 0 : "Thread's run counter was even on readerUnlock, indicating that it was not in the critical section";
+
+            thread.runCounter++;
+            if (thread.isWriter)
+            {
+                thread.isWriter = false;
+                commitWriteLog();
+            }
+        }
+        finally
+        {
+            long endTime = System.nanoTime();
+            currentThread().addRluNanoTime(endTime - startTime);
         }
     }
 
     public static RluObject getReference(RluObject object)
     {
-        // Do not process null inputs
-        if (object == null) return object;
-
-        RluObject ptrCopy = object.getPtrObjCopy();
+        long startTime = System.nanoTime();
         
-        // Object is unlocked
-        if (ptrCopy == null) return object;
-        
-        // This object is a copy and has already been referenced
-        if (object.isCopy()) return object;
-
-        // Get locking thread id
-        int lockingThreadId = ptrCopy.getLockingThreadIdFromWriteSet();
-        if (lockingThreadId >= RLU_MAX_THREADS)
+        try
         {
-            System.err.println("The thread id in a writeset was invalid");
+            // Do not process null inputs
+            if (object == null) return object;
+
+            RluObject ptrCopy = object.getPtrObjCopy();
+
+            // Object is unlocked
+            if (ptrCopy == null) return object;
+
+            // This object is a copy and has already been referenced
+            if (object.isCopy()) return object;
+
+            // Get locking thread id
+            int lockingThreadId = ptrCopy.getLockingThreadIdFromWriteSet();
+            if (lockingThreadId >= RLU_MAX_THREADS)
+            {
+                System.err.println("The thread id in a writeset was invalid");
+                return object;
+            }
+
+            // Locked by us
+            RluThread thread = currentThread();
+            if (lockingThreadId == thread.getThreadId())
+            {
+                return ptrCopy;
+            }
+
+            // Check for stealing
+            int myLocalClock = thread.localClock;
+            int otherWriteClock = threads[lockingThreadId].writeClock;
+
+            // Steal
+            if (otherWriteClock <= myLocalClock)
+            {
+                return ptrCopy;
+            }
+
+            // Don't steal
             return object;
         }
-
-        // Locked by us
-        RluThread thread = currentThread();
-        if (lockingThreadId == thread.getThreadId())
+        finally 
         {
-            return ptrCopy;
+            long endTime = System.nanoTime();
+            currentThread().addRluNanoTime(endTime - startTime);
         }
-
-        // Check for stealing
-        int myLocalClock = thread.localClock.get();
-        int otherWriteClock = threads[lockingThreadId].writeClock.get();
-        
-        // Steal
-        if (otherWriteClock <= myLocalClock)
-        {
-            return ptrCopy;
-        }
-
-        // Don't steal
-        return object;
     }
 
     /*
@@ -115,82 +144,115 @@ public class Rlu
      */
     public static RluObject tryLock(RluObject object)
     {
-        boolean isNull = object == null;
-        assert !isNull : "Object being locked was null";
-        if (isNull) return null;
+        long startTime = System.nanoTime();
 
-        RluThread thread = currentThread();
-
-        thread.isWriter = true;
-        RluObject ptrCopy = object.getPtrObjCopy();
-        
-        // If we are trying to lock a copy...
-        if (object.isCopy())
+        try
         {
-            object = object.getPtrOriginal();
-        }
+            boolean isNull = object == null;
+            assert !isNull : "Object being locked was null";
+            if (isNull) return null;
 
-        // If the object is already locked...
-        if (ptrCopy != null)
-        {
-            int lockingThreadId = ptrCopy.getLockingThreadIdFromWriteSet();
+            RluThread thread = currentThread();
 
-            if (lockingThreadId == thread.getThreadId())
+            thread.isWriter = true;
+            RluObject ptrCopy = object.getPtrObjCopy();
+            
+            // If we are trying to lock a copy...
+            if (object.isCopy())
             {
-                // Check run counter to see if locked by current execution of this thread
-                if (ptrCopy.getWriteSetRunCounter() == thread.runCounter.get())
+                object = object.getPtrOriginal();
+            }
+
+            // If the object is already locked...
+            if (ptrCopy != null)
+            {
+                int lockingThreadId = ptrCopy.getLockingThreadIdFromWriteSet();
+
+                if (lockingThreadId == thread.getThreadId())
                 {
-                    return ptrCopy;
+                    // Check run counter to see if locked by current execution of this thread
+                    if (ptrCopy.getWriteSetRunCounter() == thread.runCounter)
+                    {
+                        return ptrCopy;
+                    }
+                    
+                    // Locked by other execution of this thread
+                    return null;
                 }
-                
-                // Locked by other execution of this thread
+
+                // Locked by another thread
                 return null;
             }
 
-            // Locked by another thread
-            return null;
+            // Object is unlocked
+            RluObject copy = object.getCopyWithWriteSetHeader(thread.runCounter, thread.getThreadId());
+            thread.writeLog[thread.currPos] = copy;
+            
+            if (!object.cas(copy)) 
+            {
+                return null;
+            }
+            // Update write set header
+            thread.currPos++;
+            thread.numObjs++;
+            
+            return copy;
         }
-
-        // Object is unlocked
-        RluObject copy = object.getCopyWithWriteSetHeader(thread.runCounter.get(), thread.getThreadId());
-        thread.writeLog[thread.currPos] = copy;
-        
-        if (!object.cas(copy)) 
+        finally
         {
-            return null;
+            long endTime = System.nanoTime();
+            currentThread().addRluNanoTime(endTime - startTime);
         }
-        // Update write set header
-        thread.currPos++;
-        thread.numObjs++;
-        
-        return copy;
     }
 
     public static void abort()
     {
-        RluThread thread = currentThread();
+        long startTime = System.nanoTime();
 
-        int prevRunCounter = thread.runCounter.getAndIncrement();
-        assert (prevRunCounter & 0x1) != 0 : "Run counter was even during abort indicating thread was not in critical section";
-        
-        if (thread.isWriter)
-        {
-            thread.isWriter = false;
-            unlockObjects();
+        try{
+            RluThread thread = currentThread();
+
+            int prevRunCounter = thread.runCounter;
+            thread.runCounter++;
+            assert (prevRunCounter & 0x1) != 0 : "Run counter was even during abort indicating thread was not in critical section";
+            
+            if (thread.isWriter)
+            {
+                thread.isWriter = false;
+                unlockObjects();
+            }
+        }
+        finally{
+            long endTime = System.nanoTime();
+            currentThread().addRluNanoTime(endTime - startTime);
         }
     }
 
     public static void rluFree(RluObject object)
     {
-        assert object.isCopy() : "Can't free a node you haven't locked";
-        currentThread().addToFree(object);
+        long startTime = System.nanoTime();
+        try{
+            assert object.isCopy() : "Can't free a node you haven't locked";
+            currentThread().addToFree(object);
+        }
+        finally{
+            long endTime = System.nanoTime();
+            currentThread().addRluNanoTime(endTime - startTime);
+        }
     }
 
     public static RluObject rluGetPtr(RluObject object)
     {
-        if (object == null) return null;
-        if (object.isCopy()) return object.getPtrOriginal();
-        return object;
+        long startTime = System.nanoTime();
+        try{
+            if (object == null) return null;
+            if (object.isCopy()) return object.getPtrOriginal();
+            return object;
+        }
+        finally{
+            long endTime = System.nanoTime();
+            currentThread().addRluNanoTime(endTime - startTime);
+        }
     }
 
     /*
@@ -215,7 +277,7 @@ public class Rlu
             // Don't wait on self or null threads
             if (threads[i] == null || i == thread.getThreadId()) continue;
 
-            thread.waitOnThreads[i].runCounter = threads[i].runCounter.get();
+            thread.waitOnThreads[i].runCounter = threads[i].runCounter;
             
             // Thread is still in critical section, must wait on it
             thread.waitOnThreads[i].isWait = (thread.waitOnThreads[i].runCounter & 0x1) == 0x1;
@@ -231,10 +293,10 @@ public class Rlu
                 RluThread other = threads[i];
                 
                 // Check if other thread has progressed past critical section
-                if (thread.waitOnThreads[i].runCounter != other.runCounter.get()) break;
+                if (thread.waitOnThreads[i].runCounter != other.runCounter) break;
 
                 // Don't wait on threads that started after this one
-                if (thread.writeClock.get() <= other.localClock.get()) break;
+                if (thread.writeClock <= other.localClock) break;
             }
         }
     }
@@ -269,13 +331,13 @@ public class Rlu
     {
         RluThread thread = currentThread();
 
-        thread.writeClock.set(globalClock.get() + 1);
+        thread.writeClock = globalClock.get() + 1;
         globalClock.getAndIncrement();
 
         synchronize();
         writebackWriteLog();
 
-        thread.writeClock.set(Integer.MAX_VALUE);
+        thread.writeClock = Integer.MAX_VALUE;
 
         swapWriteLogs();
         processFree();

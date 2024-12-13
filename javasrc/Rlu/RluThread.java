@@ -1,13 +1,12 @@
 package javasrc.Rlu;
 
-import java.util.concurrent.atomic.AtomicInteger;
 
 public class RluThread extends Thread 
 {
     private int id;
-    public AtomicInteger localClock;
-    public AtomicInteger writeClock;
-    public AtomicInteger runCounter;
+    public int localClock;
+    public int writeClock;
+    public int runCounter;
     public boolean isWriter;
 
     // For tracking when we can overwrite data in log
@@ -22,14 +21,16 @@ public class RluThread extends Thread
     public int currPos = 0;
     public int numObjs = 0;
 
-    protected long totalTimeNano;
+    protected long totalRluNanoTime = 0;
+    protected long generalNanoTime = 0;
+    protected long totalTime = 0;
 
     public RluThread()
     {
         isWriter = false;
-        runCounter = new AtomicInteger(0);
-        localClock = new AtomicInteger(0);
-        writeClock = new AtomicInteger(Integer.MAX_VALUE);
+        runCounter = 0;
+        localClock = 0;
+        writeClock = Integer.MAX_VALUE;
         writeLog = new RluObject[Rlu.RLU_MAX_LOG_SIZE];
         freeNodes = new RluObject[Rlu.RLU_MAX_FREE_NODES];
         waitOnThreads = new WaitEntry[Rlu.RLU_MAX_THREADS];
@@ -79,8 +80,28 @@ public class RluThread extends Thread
         }
     }
 
-    public long getTotalTimeNano() 
+    public long getTotalRluNanoTime() 
     {
-        return totalTimeNano;
+        return totalRluNanoTime;
+    }
+    public void addRluNanoTime(long time)
+    {
+        totalRluNanoTime += time;
+    }
+    public long getGeneralNanoTime() 
+    {
+        return generalNanoTime;
+    }
+    public void addGeneralNanoTime(long time)
+    {
+        generalNanoTime += time;
+    }
+    public long getTotalTime() 
+    {
+        return totalTime;
+    }
+    public void setTotalTime(long time)
+    {
+        totalTime = time;
     }
 }

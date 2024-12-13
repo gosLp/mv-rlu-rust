@@ -15,7 +15,7 @@ trap cleanup SIGINT
 
 for t in "${threads[@]}"; do
     for wp in "${write_percent[@]}"; do
-        java -cp bin javasrc.tests.Bench "$t" list "$wp"
+        java -cp bin javasrc.tests.Bench "$t" list "$wp" 1000000 True
     done
 done
 
