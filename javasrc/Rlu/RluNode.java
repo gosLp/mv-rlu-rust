@@ -1,11 +1,14 @@
 package javasrc.Rlu;
 
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.ReentrantLock;
 
 public class RluNode extends RluObject 
 {
     public RluNode next;
     public int key;
+
+    private ReentrantLock lock = new ReentrantLock();
 
     public RluNode(int key)
     {
@@ -37,5 +40,14 @@ public class RluNode extends RluObject
         //((RluNode)(header.writeSetHeader.ptrActualObject)).next = next;
         //((RluNode)(header.writeSetHeader.ptrActualObject)).key = key;
         header.writeSetHeader.ptrActualObject.header.ptrCopyObj.set(null);
+    }
+
+    public void lock()
+    {
+        lock.lock();
+    }
+    public void unlock()
+    {
+        lock.unlock();
     }
 }

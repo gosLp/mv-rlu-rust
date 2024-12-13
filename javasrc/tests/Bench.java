@@ -4,9 +4,7 @@ import java.io.BufferedWriter;
 import java.io.FileWriter;
 import java.util.Arrays;
 
-import javasrc.Rlu.Rlu;
-import javasrc.Rlu.RluList;
-import javasrc.Rlu.RluThread;
+import javasrc.Rlu.*;
 
 public class Bench 
 {
@@ -41,7 +39,7 @@ public class Bench
         print("Thread count: " + numThreads + "\nWrite Percent: " + percentWrite);
         print("=====================\n");
 
-        RluList list = new RluList();
+        RluList list = new RluCoarseList();
 
         RluThread[] threads = getTestThreads(numThreads, test, list, percentWrite, iterations);
         
