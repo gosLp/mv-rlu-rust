@@ -38,6 +38,7 @@ Rust's built-in BTreeMap
 
 ### Running Benchmarks
 
+#### B+tree
 1. Normal Search Benchmark:
 
 ```bash
@@ -56,6 +57,21 @@ Order-8 B+ tree implementation
 Supports concurrent reads with write operations
 Maintains tree balance during insertions
 
+#### Java RLU Coarse Grained List
+1. Simply run the following script: 
+````bash
+./bench
+````
+This will produce a log file named logfile.csv. To generate plots of the data, next run the following command:
+````bash
+python myplot.py
+````
+This will generate plots in the 'plots' directory showing the benchmarked performance
+
+2. To build without running tests, run the following script:
+````bash
+./build
+```` 
 
 ### Performance
 Our implementation shows significant performance improvements with multiple threads:
@@ -63,10 +79,11 @@ Our implementation shows significant performance improvements with multiple thre
 1. Up to 4x speedup with 4 threads for search operations
 2. Competitive performance against Rust's built-in BTreeMap
 3. Efficient range query support
+4. Near linear increase in throughput for the coarse grained linked list at very low write fractions
 
 ### Credits
 
-Original RLU implementation by hudson-ayers/rlu-rust
+Original Rust RLU implementation by hudson-ayers/rlu-rust
 Based on the Read-Log-Update concurrency mechanism (SOSP '15)
 
 ## Note
