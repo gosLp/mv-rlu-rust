@@ -1,7 +1,7 @@
-# RLU B+ Tree in Rust
+# RLU Benchmarks with B+tree in Rust and Coarse Grained Linked List in Java
 
 ## Overview
-This project implements a concurrent B+ tree data structure using the Read-Log-Update (RLU) concurrency mechanism in Rust. It builds upon the RLU implementation by [hudson-ayers/rlu-rust](https://github.com/hudson-ayers/rlu-rust), extending it to support B+ tree operations.
+This project implements a concurrent B+ tree data structure using the Read-Log-Update (RLU) concurrency mechanism in Rust. It builds upon the RLU implementation by [hudson-ayers/rlu-rust](https://github.com/hudson-ayers/rlu-rust), extending it to support B+ tree operations. it also implements RLU in Java and benchmarks operations on a coarse grained linked list.
 
 The B+ tree implementation offers:
 - Concurrent search operations
@@ -13,6 +13,7 @@ The B+ tree implementation offers:
 
 ### Prerequisites
 - Rust and Cargo (latest stable version)
+- Java Runtime Environment (lastest stable version)
 - Git
 
 ### Installation
